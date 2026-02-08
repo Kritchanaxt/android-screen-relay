@@ -39,6 +39,8 @@ import androidx.compose.ui.unit.sp
 import com.example.android_screen_relay.ui.theme.AndroidscreenrelayTheme
 import java.net.Inet4Address
 import java.net.NetworkInterface
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 
 class MainActivity : ComponentActivity() {
 
@@ -114,6 +116,7 @@ fun AppNavigation(
     var isViewerMode by remember { mutableStateOf(false) }
     var isScanning by remember { mutableStateOf(false) }
     var targetIp by remember { mutableStateOf("") }
+    var connectionPasskey by remember { mutableStateOf("") } // Store passkey for auth
     
     // Simple state to track only for UI toggling (Real app should observe service state)
     var isBroadcasting by remember { mutableStateOf(false) }
@@ -137,11 +140,13 @@ fun AppNavigation(
                 targetIp = ip
                 isScanning = false
                 isViewerMode = true
+                // Note: QrCode scan is legacy now? Or we should embed passkey in QR?
+                // If we use passkey mode, QR might not be useful for Auth unless it contains the key.
             },
             onClose = { isScanning = false }
         )
     } else if (isViewerMode) {
-        ViewerScreen(hostIp = targetIp)
+        ViewerScreen(hostIp = targetIp, passkey = connectionPasskey)
         // Add a floating back button to exit viewer
         Box(modifier = Modifier.fillMaxSize()) {
             FloatingActionButton(
@@ -202,8 +207,9 @@ fun AppNavigation(
                         onScanClick = { isScanning = true }
                     )
                     1 -> ConnectScreen(
-                        onConnect = { ip ->
+                        onConnect = { ip, key ->
                             targetIp = ip
+                            connectionPasskey = key
                             isViewerMode = true
                         }
                     )
@@ -221,13 +227,23 @@ fun HomeScreen(
     onStopService: () -> Unit,
     onScanClick: () -> Unit
 ) {
-    val localIp = remember { getLocalIpAddress() } ?: "Unknown"
-    val deviceName = remember { "${Build.MANUFACTURER} ${Build.MODEL}" }
-    var showQrDialog by remember { mutableStateOf(false) }
-
-    if (showQrDialog) {
-        ShowQRCodeDialog(ip = localIp, onDismiss = { showQrDialog = false })
+    var passkey by remember { mutableStateOf<String?>(null) }
+    
+    // Poll for passkey update
+    LaunchedEffect(isBroadcasting) {
+        if (isBroadcasting) {
+            while(true) {
+                passkey = RelayService.currentPasskey
+                if (passkey != null) break
+                kotlinx.coroutines.delay(500)
+            }
+        } else {
+            passkey = null
+        }
     }
+
+    val deviceName = remember { "${Build.MANUFACTURER} ${Build.MODEL}" }
+    // var showQrDialog by remember { mutableStateOf(false) } // Disabled for passkey mode
     
     Column(
         modifier = Modifier
@@ -289,27 +305,30 @@ fun HomeScreen(
                 
                 Spacer(modifier = Modifier.height(24.dp))
                 
-                Text("My IP Address", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                Text("Connection Passkey", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
                 Row(
-                    modifier = Modifier.fillMaxWidth().clickable { showQrDialog = true },
+                    modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = localIp,
+                        text = passkey ?: (if (isBroadcasting) "Generating..." else "Not Active"),
                         style = MaterialTheme.typography.headlineSmall.copy( // Reduced from headlineMedium
                             fontWeight = FontWeight.Black,
-                            color = Color(0xFF007AFF)
+                            color = if (passkey != null) Color(0xFF007AFF) else Color.Gray,
+                            letterSpacing = 4.sp
                         ),
                         modifier = Modifier.weight(1f),
                         maxLines = 1,
                         overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                     )
-                    Icon(
-                        Icons.Filled.QrCode, 
-                        null, 
-                        tint = Color(0xFF007AFF),
-                        modifier = Modifier.size(32.dp)
-                    )
+                    if (passkey != null) {
+                        Icon(
+                            Icons.Filled.Key, 
+                            null, 
+                            tint = Color(0xFF007AFF),
+                            modifier = Modifier.size(32.dp)
+                        )
+                    }
                 }
             }
         }
@@ -439,8 +458,12 @@ fun HomeScreen(
 }
 
 @Composable
-fun ConnectScreen(onConnect: (String) -> Unit) {
-    var ipInput by remember { mutableStateOf("") }
+fun ConnectScreen(onConnect: (String, String) -> Unit) {
+    var passkeyInput by remember { mutableStateOf("") }
+    var isConnecting by remember { mutableStateOf(false) }
+    var errorMsg by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+    val context = LocalContext.current
 
     Column(
         modifier = Modifier
@@ -492,25 +515,58 @@ fun ConnectScreen(onConnect: (String) -> Unit) {
             Spacer(modifier = Modifier.height(16.dp))
             
             OutlinedTextField(
-                value = ipInput,
-                onValueChange = { ipInput = it },
-                label = { Text("Enter Host IP Address") },
-                placeholder = { Text("e.g. 192.168.1.45") },
+                value = passkeyInput,
+                onValueChange = { 
+                    if (it.length <= 6) passkeyInput = it 
+                    errorMsg = null
+                },
+                label = { Text("Enter 6-digit Host Passkey") },
+                placeholder = { Text("e.g. 123456") },
                 modifier = Modifier.fillMaxWidth(),
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                 shape = RoundedCornerShape(12.dp),
-                leadingIcon = { Icon(Icons.Filled.Computer, null) }
+                leadingIcon = { Icon(Icons.Filled.Key, null) }
             )
+            
+            if (errorMsg != null) {
+                Text(
+                    text = errorMsg!!,
+                    color = Color.Red,
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
+            }
             
             Spacer(modifier = Modifier.height(24.dp))
             
             Button(
-                onClick = { if(ipInput.isNotEmpty()) onConnect(ipInput) },
+                onClick = { 
+                    if(passkeyInput.isNotEmpty()) {
+                        isConnecting = true
+                        errorMsg = null
+                        scope.launch {
+                            val ip = NetworkDiscovery.discoverHost(context, passkeyInput)
+                            isConnecting = false
+                            if (ip != null) {
+                                onConnect(ip, passkeyInput)
+                            } else {
+                                errorMsg = "Host not found with this passkey."
+                            }
+                        }
+                    }
+                },
+                enabled = !isConnecting,
                 modifier = Modifier.fillMaxWidth().height(50.dp),
                 shape = RoundedCornerShape(12.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF007AFF))
             ) {
-                Text("Connect", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                if (isConnecting) {
+                    CircularProgressIndicator(color = Color.White, modifier = Modifier.size(24.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Searching...", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                } else {
+                    Text("Connect", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                }
             }
 
             Spacer(modifier = Modifier.height(32.dp))

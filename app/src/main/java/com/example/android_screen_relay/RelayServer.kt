@@ -5,15 +5,40 @@ import org.java_websocket.handshake.ClientHandshake
 import org.java_websocket.server.WebSocketServer
 import java.net.InetSocketAddress
 import android.util.Log
+import kotlinx.coroutines.launch
 
 class RelayServer(port: Int) : WebSocketServer(InetSocketAddress(port)) {
 
+    private var currentPasskey: String? = null
+    // Store authenticated sessions (could use a list or set)
+    private val authenticatedSessions = java.util.Collections.synchronizedSet(HashSet<WebSocket>())
+    // Allow single controller for better security? For now allow multiple if they know the code.
+
+    fun updatePasskey(passkey: String?) {
+        this.currentPasskey = passkey
+        if (passkey == null) {
+            // If passkey is cleared/reset, disconnect everyone or just invalidate?
+            // Disconnecting is safer
+            authenticatedSessions.clear()
+            connections.forEach { it.close(1000, "Server passkey reset") }
+        }
+    }
+
     override fun onOpen(conn: WebSocket, handshake: ClientHandshake) {
         Log.d("RelayServer", "New connection from " + conn.remoteSocketAddress)
+        // Enforce timeout for auth?
+        // Basic timer to kick if not authed in 5 seconds
+        kotlinx.coroutines.GlobalScope.launch {
+            kotlinx.coroutines.delay(5000)
+            if (conn.isOpen && !authenticatedSessions.contains(conn)) {
+                conn.close(1008, "Authentication timeout")
+            }
+        }
     }
 
     override fun onClose(conn: WebSocket, code: Int, reason: String, remote: Boolean) {
         Log.d("RelayServer", "Closed connection to " + conn.remoteSocketAddress)
+        authenticatedSessions.remove(conn)
     }
 
     override fun onMessage(conn: WebSocket, message: String) {
@@ -21,6 +46,34 @@ class RelayServer(port: Int) : WebSocketServer(InetSocketAddress(port)) {
         try {
             val json = org.json.JSONObject(message)
             val type = json.optString("type")
+            
+            // SECURITY CHECK: Authentication
+            if (type == "auth") {
+                val attemptKey = json.optString("key")
+                if (currentPasskey != null && attemptKey == currentPasskey) {
+                    authenticatedSessions.add(conn)
+                    val response = org.json.JSONObject()
+                    response.put("type", "auth_response")
+                    response.put("status", "ok")
+                    conn.send(response.toString())
+                    Log.d("RelayServer", "Client authenticated: " + conn.remoteSocketAddress)
+                } else {
+                    val response = org.json.JSONObject()
+                    response.put("type", "auth_response")
+                    response.put("status", "failed")
+                    conn.send(response.toString())
+                    conn.close(1008, "Invalid Passkey")
+                    Log.w("RelayServer", "Auth failed for: " + conn.remoteSocketAddress)
+                }
+                return
+            }
+
+            // Reject all other messages if not authenticated
+            if (!authenticatedSessions.contains(conn)) {
+                // Ignore or close?
+                // conn.close(1008, "Not Authenticated") // Aggressive
+                return 
+            }
             
             when (type) {
                 "click" -> {
@@ -75,6 +128,18 @@ class RelayServer(port: Int) : WebSocketServer(InetSocketAddress(port)) {
     }
     
     fun broadcastImage(base64Image: String) {
-        broadcast(base64Image)
+        // Only broadcast to authenticated clients
+        val frameMsg = "{\"type\": \"frame\", \"data\": \"$base64Image\"}"
+        broadcastToAuthenticated(frameMsg)
+    }
+
+    fun broadcastToAuthenticated(message: String) {
+        synchronized(authenticatedSessions) {
+            for (client in authenticatedSessions) {
+                if (client.isOpen) {
+                    client.send(message)
+                }
+            }
+        }
     }
 }

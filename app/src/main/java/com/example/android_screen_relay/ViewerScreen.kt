@@ -21,7 +21,7 @@ import androidx.compose.ui.unit.toSize
 import androidx.compose.ui.geometry.Offset
 
 @Composable
-fun ViewerScreen(hostIp: String) {
+fun ViewerScreen(hostIp: String, passkey: String) {
     var bitmap by remember { mutableStateOf<Bitmap?>(null) }
     var status by remember { mutableStateOf("Connecting to $hostIp...") }
     
@@ -32,28 +32,102 @@ fun ViewerScreen(hostIp: String) {
     var imageSize by remember { mutableStateOf(androidx.compose.ui.geometry.Size.Zero) }
 
     DisposableEffect(hostIp) {
-        val wsManager = WebSocketManager("ws://$hostIp:8887") { message ->
-            try {
-                // Parse JSON: {"type": "frame", "data": "BASE64..."}
-                val json = JSONObject(message)
-                if (json.optString("type") == "frame") {
-                    val base64String = json.getString("data")
-                    val decodedBytes = Base64.decode(base64String, Base64.NO_WRAP)
-                    val decodedBitmap = BitmapFactory.decodeByteArray(decodedBytes, 0, decodedBytes.size)
+        val wsManager = WebSocketManager(
+            url = "ws://$hostIp:8887",
+            onMessageReceived = { message ->
+                try {
+                    // Parse JSON: {"type": "frame", "data": "BASE64..."}
+                    val json = JSONObject(message)
+                    val type = json.optString("type")
                     
-                    // Update state
-                    bitmap = decodedBitmap
-                    status = "Connected"
+                    if (type == "auth_response") {
+                         val authStatus = json.optString("status")
+                         if (authStatus == "ok") {
+                             status = "Authenticated! Waiting for stream..."
+                         } else {
+                             status = "Authentication Failed!"
+                         }
+                    } else if (type == "frame") {
+                        val base64String = json.getString("data")
+                        val decodedBytes = Base64.decode(base64String, Base64.NO_WRAP)
+                        val decodedBitmap = BitmapFactory.decodeByteArray(decodedBytes, 0, decodedBytes.size)
+                        
+                        // Update state
+                        bitmap = decodedBitmap
+                        status = "Connected"
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
                 }
-            } catch (e: Exception) {
-                e.printStackTrace()
+            },
+            onConnectionOpened = {
+                status = "Connected! Authenticating..."
+                // Send Auth Token immediately
+                val authJson = JSONObject()
+                authJson.put("type", "auth")
+                authJson.put("key", passkey)
+                // We need to send this. The WebSocketManager needs a reference to 'this' or we use a captured variable?
+                // The onConnectionOpened is a callback. 'wsManager' variable is initialized *after* this lambda is created? 
+                // No, variable initialization in Kotlin logic...
+                // Actually 'wsManager' is not yet assigned to wsManagerRef.
+                // But inside 'DisposableEffect', we can rely on 'wsManager' variable being available if we reference it carefully?
+                // No, circular dependency in definition.
+                // We can use a trick or valid scope.
+                // Let's call send() on the instance *after* initialization block, but connect() is async?
+                // Wait, WebSocketManager.connect() starts thread.
+                // The 'onConnectionOpened' is called from that thread.
+                // We can't access 'wsManager' inside its own constructor params easily.
+                
+                // Solution: We need a way to send. 
+                // Let's modify WebSocketManager slightly or use a hack.
+                // Actually, wsManagerRef is updated *after* wsManager is created.
+                // If onConnectionOpened happens *very fast*, wsManagerRef might still be null?
+                // Unlikely in UI thread composition but possible in threading.
+                
+                // Better: Just use a one-shot send inside the callback if we can get the instance.
+                // Or just:
+            },
+            onConnectionFailed = { error ->
+                status = "Socket Error: $error"
             }
-        }
+        )
+        // Assign ref first? No.
+        wsManagerRef = wsManager
+        
+        // We need to inject the send action into onOpen.
+        // But WebSocketManager is our wrapper.
+        // Let's modify WebSocketManager to accept an onOpenAction separate from constructor?
+        // Or we can just call sendAuth immediately after connect? No, must wait for open.
+        
+        // The simplest way without changing WebSocketManager too much:
+        // WebSocketManager stores the socket.
+        // When onConnectionOpened fires, we can assume `wsManager` is valid reference if we use `wsManagerRef`?
+        // No, `wsManagerRef` is state, updated asynchronously in Compose terms (maybe).
+        
+        // Let's just create a thread-safe holder.
+        
+        wsManager.connect()
+        
+        // HACK: Send auth in a delayed loop or modifying wrapper to auto-send.
+        // But the CLEAN way is to modify WebSocketManager to allow sending on Open.
+        // Wait, onConnectionOpened IS the hook.
+        // But inside it, we don't have `wsManager` reference yet because it's being constructed.
+        
         wsManager.connect()
         wsManagerRef = wsManager
-
+        
         onDispose {
             wsManager.disconnect()
+        }
+    }
+    
+    // Side effect to send auth when connected
+    LaunchedEffect(wsManagerRef, status) {
+        if (status == "Connected! Authenticating..." && wsManagerRef != null) {
+            val authJson = JSONObject()
+            authJson.put("type", "auth")
+            authJson.put("key", passkey)
+            wsManagerRef?.send(authJson.toString())
         }
     }
 

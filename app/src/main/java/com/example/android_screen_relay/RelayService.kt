@@ -10,6 +10,8 @@ import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import android.content.pm.ServiceInfo
+import kotlinx.coroutines.*
+import kotlin.random.Random
 
 class RelayService : Service() {
 
@@ -18,15 +20,29 @@ class RelayService : Service() {
     private lateinit var overlayManager: OverlayManager
     private lateinit var screenCaptureManager: ScreenCaptureManager
     private val CHANNEL_ID = "RelayServiceChannel"
+    
+    private var discoveryJob: Job? = null
+    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
-        // webSocketManager = WebSocketManager("wss://echo.websocket.org") // Removed
+        
+        // Generate Passkey
+        val passkey = String.format("%06d", Random.nextInt(0, 999999))
+        currentPasskey = passkey
+        
+        // Start UDP Discovery Listener
+        discoveryJob = scope.launch {
+            NetworkDiscovery.startHostListeners(this@RelayService, passkey, 8887) {
+                isActive // check if scope is active
+            }
+        }
         
         // Start Local Server
         try {
             relayServer = RelayServer(8887)
+            relayServer?.updatePasskey(passkey) // Set the passkey
             relayServer?.start()
             android.util.Log.d("RelayService", "RelayServer started on port 8887")
         } catch (e: Exception) {
@@ -39,6 +55,8 @@ class RelayService : Service() {
 
     companion object {
         const val ACTION_STOP = "com.example.android_screen_relay.STOP"
+        var currentPasskey: String? = null
+            private set
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -48,34 +66,49 @@ class RelayService : Service() {
         }
 
         val notification = createNotification()
-        
-        // Connect WebSocket - Removed
-        // webSocketManager.connect()
 
+        // IMPORTANT: Start Foreground Service BEFORE creating the virtual display (Android 14+ requirement)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(1, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
+        } else {
+            startForeground(1, notification)
+        }
+        
         // Show Overlay
         overlayManager.showOverlay()
 
         // Start Screen Capture if data is present
-        // IMPORTANT: Must start capture (obtain MediaProjection) BEFORE calling startForeground with type mediaProjection on Android 14+
         if (intent != null) {
             val resultCode = intent.getIntExtra("RESULT_CODE", 0)
             val dataIntent = intent.getParcelableExtra<Intent>("DATA_INTENT")
             
             if (resultCode != 0 && dataIntent != null) {
                 try {
+                    android.util.Log.d("RelayService", "Starting Screen Capture with ResultCode: $resultCode")
                     screenCaptureManager.startCapture(resultCode, dataIntent) { message ->
-                        relayServer?.broadcast(message)
+                         // Message is full JSON "{"type": "frame" ...}"
+                         // But broadcastImage expects Base64 OR it was calling broadcast(message)
+                         // Let's check RelayServer.broadcastImage
+                         // It takes base64Image string? No, ScreenCaptureManager emits full JSON string now.
+                         // Wait, ScreenCaptureManager emits: "{\"type\": \"frame\", \"data\": \"$base64String\"}"
+                         // RelayServer.broadcastImage(base64Image) constructs the JSON again!
+                         // We need to fix this flow.
+                         
+                         // The original code was: relayServer?.broadcast(message) (which sends to everyone)
+                         // Now we want to send to authenticated only.
+                         // But relayServer.broadcastImage wraps it in JSON again.
+                         // Let's modify ScreenCaptureManager to emit just Base64? Or modify RelayService to extract it?
+                         // Or modify RelayServer to have a general "broadcastToAuthenticated(fullJson)" function.
+                         
+                         // Hack: Parse the JSON here is slow.
+                         // Better: Add broadcastToAuthenticated to RelayServer.
+                        relayServer?.broadcastToAuthenticated(message)
                     }
                 } catch (e: Exception) {
+                    android.util.Log.e("RelayService", "Error starting capture: ${e.message}")
                     e.printStackTrace()
                 }
             }
-        }
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(1, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
-        } else {
-             startForeground(1, notification)
         }
 
         // Using START_STICKY so if the service is killed, it restarts (without the intent data, so no screen capture, but server is alive)
@@ -89,6 +122,10 @@ class RelayService : Service() {
         } catch (e: Exception) {
             e.printStackTrace()
         }
+        discoveryJob?.cancel()
+        scope.cancel()
+        currentPasskey = null
+        
         overlayManager.removeOverlay()
         screenCaptureManager.stopCapture()
     }

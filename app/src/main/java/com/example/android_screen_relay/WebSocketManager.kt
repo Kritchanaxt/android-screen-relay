@@ -7,7 +7,12 @@ import okhttp3.WebSocketListener
 import okhttp3.Response
 import android.util.Log
 
-class WebSocketManager(private val url: String, private val onMessageReceived: ((String) -> Unit)? = null) {
+class WebSocketManager(
+    private val url: String, 
+    private val onMessageReceived: ((String) -> Unit)? = null,
+    private val onConnectionOpened: (() -> Unit)? = null,
+    private val onConnectionFailed: ((String) -> Unit)? = null
+) {
     private var client: OkHttpClient = OkHttpClient()
     private var webSocket: WebSocket? = null
 
@@ -16,10 +21,10 @@ class WebSocketManager(private val url: String, private val onMessageReceived: (
         webSocket = client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 Log.d("WebSocketManager", "Connected to $url")
+                onConnectionOpened?.invoke()
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
-                // Log.d("WebSocketManager", "Received: $text") // Verbose
                 onMessageReceived?.invoke(text)
             }
 
@@ -29,7 +34,7 @@ class WebSocketManager(private val url: String, private val onMessageReceived: (
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                 Log.e("WebSocketManager", "Error: ${t.message}")
-                // Implement retry logic here
+                onConnectionFailed?.invoke(t.message ?: "Unknown error")
             }
         })
     }
