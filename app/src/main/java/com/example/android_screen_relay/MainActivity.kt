@@ -14,6 +14,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -27,6 +28,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -62,7 +64,8 @@ class MainActivity : ComponentActivity() {
         setContent {
             AndroidscreenrelayTheme {
                 AppNavigation(
-                    onStartService = { checkPermissionsAndStart() }
+                    onStartService = { checkPermissionsAndStart() },
+                    onStopService = { stopRelayService() }
                 )
             }
         }
@@ -93,15 +96,51 @@ class MainActivity : ComponentActivity() {
             startService(intent)
         }
     }
+
+    private fun stopRelayService() {
+        val intent = Intent(this, RelayService::class.java).apply {
+            action = RelayService.ACTION_STOP
+        }
+        startService(intent)
+    }
 }
 
 @Composable
-fun AppNavigation(onStartService: () -> Unit) {
+fun AppNavigation(
+    onStartService: () -> Unit,
+    onStopService: () -> Unit = {} // Add check later
+) {
     var currentTab by remember { mutableStateOf(0) } // 0: Home, 1: Connect (Client), 2: Me
     var isViewerMode by remember { mutableStateOf(false) }
+    var isScanning by remember { mutableStateOf(false) }
     var targetIp by remember { mutableStateOf("") }
+    
+    // Simple state to track only for UI toggling (Real app should observe service state)
+    var isBroadcasting by remember { mutableStateOf(false) }
 
-    if (isViewerMode) {
+    if (isScanning) {
+        val context = LocalContext.current
+        var hasCameraPermission by remember {
+            mutableStateOf(
+                androidx.core.content.ContextCompat.checkSelfPermission(
+                    context, 
+                    android.Manifest.permission.CAMERA
+                ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+            )
+        }
+        
+        QRScannerScreen(
+            onQrCodeScanned = { result ->
+                // Basic extraction if it's a full URL e.g. ws://192.168.1.5:8887
+                // Or just IP
+                val ip = result.removePrefix("ws://").substringBefore(":")
+                targetIp = ip
+                isScanning = false
+                isViewerMode = true
+            },
+            onClose = { isScanning = false }
+        )
+    } else if (isViewerMode) {
         ViewerScreen(hostIp = targetIp)
         // Add a floating back button to exit viewer
         Box(modifier = Modifier.fillMaxSize()) {
@@ -150,7 +189,18 @@ fun AppNavigation(onStartService: () -> Unit) {
         ) { innerPadding ->
             Box(modifier = Modifier.padding(innerPadding)) {
                 when (currentTab) {
-                    0 -> HomeScreen(onStartService)
+                    0 -> HomeScreen(
+                        isBroadcasting = isBroadcasting,
+                        onStartService = {
+                            onStartService()
+                            isBroadcasting = true
+                        },
+                        onStopService = {
+                             onStopService()
+                             isBroadcasting = false
+                        },
+                        onScanClick = { isScanning = true }
+                    )
                     1 -> ConnectScreen(
                         onConnect = { ip ->
                             targetIp = ip
@@ -165,9 +215,19 @@ fun AppNavigation(onStartService: () -> Unit) {
 }
 
 @Composable
-fun HomeScreen(onStartService: () -> Unit) {
+fun HomeScreen(
+    isBroadcasting: Boolean,
+    onStartService: () -> Unit,
+    onStopService: () -> Unit,
+    onScanClick: () -> Unit
+) {
     val localIp = remember { getLocalIpAddress() } ?: "Unknown"
     val deviceName = remember { "${Build.MANUFACTURER} ${Build.MODEL}" }
+    var showQrDialog by remember { mutableStateOf(false) }
+
+    if (showQrDialog) {
+        ShowQRCodeDialog(ip = localIp, onDismiss = { showQrDialog = false })
+    }
     
     Column(
         modifier = Modifier
@@ -191,11 +251,13 @@ fun HomeScreen(onStartService: () -> Unit) {
                     color = Color(0xFF1A1A1A)
                 )
             )
-            Icon(
-                imageVector = Icons.Filled.QrCodeScanner,
-                contentDescription = "Scan",
-                tint = Color(0xFF007AFF)
-            )
+            IconButton(onClick = onScanClick) {
+                Icon(
+                    imageVector = Icons.Filled.QrCodeScanner,
+                    contentDescription = "Scan",
+                    tint = Color(0xFF007AFF)
+                )
+            }
         }
 
         Spacer(modifier = Modifier.height(24.dp))
@@ -213,7 +275,13 @@ fun HomeScreen(onStartService: () -> Unit) {
                     Spacer(modifier = Modifier.width(8.dp))
                     Column {
                         Text("Device", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
-                        Text(deviceName, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
+                        Text(
+                            deviceName, 
+                            style = MaterialTheme.typography.titleMedium, // Reduced from bodyLarge
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                        )
                     }
                     Spacer(modifier = Modifier.weight(1f))
                     Icon(Icons.Filled.Edit, null, tint = Color(0xFF007AFF), modifier = Modifier.size(20.dp))
@@ -223,22 +291,24 @@ fun HomeScreen(onStartService: () -> Unit) {
                 
                 Text("My IP Address", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
+                    modifier = Modifier.fillMaxWidth().clickable { showQrDialog = true },
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
                         text = localIp,
-                        style = MaterialTheme.typography.headlineMedium.copy(
-                            letterSpacing = 2.sp,
+                        style = MaterialTheme.typography.headlineSmall.copy( // Reduced from headlineMedium
                             fontWeight = FontWeight.Black,
                             color = Color(0xFF007AFF)
-                        )
+                        ),
+                        modifier = Modifier.weight(1f),
+                        maxLines = 1,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                     )
                     Icon(
-                        Icons.Filled.Lock, 
+                        Icons.Filled.QrCode, 
                         null, 
-                        tint = Color(0xFF007AFF).copy(alpha = 0.5f)
+                        tint = Color(0xFF007AFF),
+                        modifier = Modifier.size(32.dp)
                     )
                 }
             }
@@ -262,44 +332,100 @@ fun HomeScreen(onStartService: () -> Unit) {
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        // Start Broadcasting Action
-        Card(
-            onClick = onStartService,
-            modifier = Modifier.fillMaxWidth().height(80.dp),
-            shape = RoundedCornerShape(12.dp),
-            colors = CardDefaults.cardColors(containerColor = Color(0xFFE3F2FD))
-        ) {
-            Row(
-                modifier = Modifier.fillMaxSize().padding(16.dp),
-                verticalAlignment = Alignment.CenterVertically
+        // Start/Stop Broadcasting Action
+        if (isBroadcasting) {
+            Card(
+                onClick = { /* Handle disconnect confirmation dialog if needed */ },
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = Color.White),
+                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
             ) {
-                Box(
-                    modifier = Modifier
-                        .size(48.dp)
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(Color(0xFF007AFF)),
-                    contentAlignment = Alignment.Center
+                Column(modifier = Modifier.padding(20.dp)) {
+                     Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier
+                                .size(48.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(Color(0xFFE8F5E9)), // Light Green bg
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(Icons.Filled.CastConnected, null, tint = Color(0xFF4CAF50))
+                        }
+                        Spacer(modifier = Modifier.width(16.dp))
+                        Column {
+                            Text(
+                                "Relay is Active",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF2E7D32) // Darker Green text
+                            )
+                            Text(
+                                "Screen is being shared locally",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Color.Gray
+                            )
+                        }
+                     }
+                     
+                     Spacer(modifier = Modifier.height(24.dp))
+                     
+                     Button(
+                        onClick = onStopService,
+                        modifier = Modifier.fillMaxWidth().height(50.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF3B30)), // Red color
+                        shape = RoundedCornerShape(12.dp)
+                     ) {
+                        Icon(Icons.Filled.Stop, null)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Stop Sharing", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                     }
+                }
+            }
+        } else {
+            Card(
+                onClick = onStartService,
+                modifier = Modifier.fillMaxWidth().height(80.dp),
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.cardColors(containerColor = Color(0xFFE3F2FD))
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxSize().padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(Icons.Filled.Cast, null, tint = Color.White)
+                    Box(
+                        modifier = Modifier
+                            .size(48.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(Color(0xFF007AFF)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(Icons.Filled.Cast, null, tint = Color.White)
+                    }
+                    Spacer(modifier = Modifier.width(16.dp))
+                    Column {
+                        Text(
+                            "Start Broadcasting", 
+                            style = MaterialTheme.typography.bodyLarge,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF0D47A1),
+                            maxLines = 1, // Prevent overflow
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                        )
+                        Text(
+                            "Share this screen to others", 
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color(0xFF1976D2),
+                            maxLines = 1,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                        )
+                    }
+                    Spacer(modifier = Modifier.weight(1f))
+                    Icon(Icons.Filled.PlayArrow, null, tint = Color(0xFF0D47A1))
                 }
-                Spacer(modifier = Modifier.width(16.dp))
-                Column {
-                    Text(
-                        "Start Broadcasting", 
-                        style = MaterialTheme.typography.bodyLarge,
-                        fontWeight = FontWeight.Bold,
-                        color = Color(0xFF0D47A1)
-                    )
-                    Text(
-                        "Share this screen to others", 
-                        style = MaterialTheme.typography.bodySmall,
-                        color = Color(0xFF1976D2)
-                    )
-                }
-                Spacer(modifier = Modifier.weight(1f))
-                Icon(Icons.Filled.PlayArrow, null, tint = Color(0xFF0D47A1))
             }
         }
+
         
         Spacer(modifier = Modifier.weight(1f))
         
@@ -325,7 +451,7 @@ fun ConnectScreen(onConnect: (String) -> Unit) {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(200.dp)
+                .height(140.dp) // Reduced height
                 .background(
                     Brush.verticalGradient(
                         colors = listOf(Color(0xFF4A90E2), Color(0xFF0044AA))
@@ -333,18 +459,18 @@ fun ConnectScreen(onConnect: (String) -> Unit) {
                 )
                 .padding(24.dp)
         ) {
-            Column {
+            Column(modifier = Modifier.align(Alignment.CenterStart)) {
                 Text(
                     "Connection failed?", 
-                    style = MaterialTheme.typography.headlineSmall, 
+                    style = MaterialTheme.typography.titleLarge, // Slightly smaller
                     color = Color.White,
                     fontWeight = FontWeight.Bold
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    "Try ensuring both devices\nare on the same Wi-Fi.",
+                    "Ensure both devices are\non the same Wi-Fi.",
                     style = MaterialTheme.typography.bodyMedium,
-                    color = Color.White.copy(alpha = 0.8f)
+                    color = Color.White.copy(alpha = 0.9f)
                 )
             }
             Icon(
@@ -352,9 +478,8 @@ fun ConnectScreen(onConnect: (String) -> Unit) {
                 contentDescription = null,
                 modifier = Modifier
                     .align(Alignment.CenterEnd)
-                    .size(80.dp)
-                    .padding(end = 16.dp),
-                tint = Color.White.copy(alpha = 0.5f)
+                    .size(60.dp), // Slightly smaller
+                tint = Color.White.copy(alpha = 0.8f) // Increased brightness
             )
         }
 
@@ -513,4 +638,55 @@ fun getLocalIpAddress(): String? {
         ex.printStackTrace()
     }
     return null
+}
+
+@Composable
+fun ShowQRCodeDialog(ip: String, onDismiss: () -> Unit) {
+    val qrBitmap = remember(ip) {
+        QRCodeUtils.generateQRCode("ws://$ip:8887", 512, 512)
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Close")
+            }
+        },
+        title = {
+            Text("Scan to Connect")
+        },
+        text = {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                if (qrBitmap != null) {
+                    androidx.compose.foundation.Image(
+                        bitmap = qrBitmap.asImageBitmap(),
+                        contentDescription = "QR Code",
+                        modifier = Modifier
+                            .size(250.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                    )
+                } else {
+                    Text("Error generating QR Code")
+                }
+                Spacer(modifier = Modifier.height(16.dp))
+                Text(
+                    text = ip,
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFF007AFF)
+                )
+                Text(
+                    text = "Ensure devices are on the same Wi-Fi",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color.Gray
+                )
+            }
+        },
+        containerColor = Color.White,
+        shape = RoundedCornerShape(16.dp)
+    )
 }
