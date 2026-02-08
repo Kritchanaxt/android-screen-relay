@@ -78,9 +78,8 @@ class RelayService : Service() {
              startForeground(1, notification)
         }
 
-        // Using START_REDELIVER_INTENT so if the service is killed, it restarts with the same intent (including permission token)
-        // Note: The permission token might expire or be invalidated, but it's better than null.
-        return START_NOT_STICKY
+        // Using START_STICKY so if the service is killed, it restarts (without the intent data, so no screen capture, but server is alive)
+        return START_STICKY
     }
 
     override fun onDestroy() {

@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">android-screen-relay</string>
+    <string name="accessibility_service_description">Allows remote control of the device via Screen Relay.</string>
 </resources>

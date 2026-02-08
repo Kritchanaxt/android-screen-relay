@@ -548,6 +548,23 @@ fun RowScope.ToolCard(name: String, icon: ImageVector, color: Color) {
 
 @Composable
 fun MeScreen() {
+    val context = LocalContext.current
+    var isAccessibilityEnabled by remember { mutableStateOf(checkAccessibilityPermission(context)) }
+    var isBatteryOptimized by remember { mutableStateOf(checkBatteryOptimization(context)) }
+    
+    // Resume check
+    val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                isAccessibilityEnabled = checkAccessibilityPermission(context)
+                isBatteryOptimized = checkBatteryOptimization(context)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -576,13 +593,49 @@ fun MeScreen() {
                     Text("Not logged in", style = MaterialTheme.typography.bodyMedium, color = Color.Gray)
                 }
                 Spacer(modifier = Modifier.weight(1f))
-                Button(
-                    onClick = { },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF007AFF))
-                ) {
-                    Text("Log In")
-                }
             }
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+        
+        // System Permissions
+        Text(
+            "System Permissions",
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+            style = MaterialTheme.typography.titleSmall,
+            color = Color.Gray
+        )
+        
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(Color.White)
+                .padding(vertical = 8.dp)
+        ) {
+             PermissionItem(
+                title = "Remote Control (Touch)",
+                subtitle = "Required for remote clicks",
+                isEnabled = isAccessibilityEnabled,
+                onClick = { 
+                    val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+                    intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                    context.startActivity(intent)
+                }
+            )
+            Divider(color = Color(0xFFF0F0F0))
+             PermissionItem(
+                title = "Run in Background",
+                subtitle = "Prevent app from being killed",
+                isEnabled = isBatteryOptimized,
+                onClick = {
+                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !isBatteryOptimized) {
+                        val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
+                        intent.data = Uri.parse("package:${context.packageName}")
+                        intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                        context.startActivity(intent)
+                    }
+                }
+            )
         }
 
         Spacer(modifier = Modifier.height(12.dp))
@@ -598,11 +651,43 @@ fun MeScreen() {
             Divider(color = Color(0xFFF0F0F0))
             MenuItem(Icons.Filled.Help, "Help Center")
             Divider(color = Color(0xFFF0F0F0))
-            MenuItem(Icons.Filled.Feedback, "Feedback")
-            Divider(color = Color(0xFFF0F0F0))
             MenuItem(Icons.Filled.Info, "About Us")
         }
     }
+}
+
+@Composable
+fun PermissionItem(title: String, subtitle: String, isEnabled: Boolean, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(16.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
+            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+        }
+        Switch(checked = isEnabled, onCheckedChange = { onClick() })
+    }
+}
+
+fun checkAccessibilityPermission(context: Context): Boolean {
+    val expectedId = context.packageName + "/.RelayAccessibilityService"
+    val enabledServices = Settings.Secure.getString(
+        context.contentResolver,
+        Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+    ) ?: ""
+    return enabledServices.contains(expectedId)
+}
+
+fun checkBatteryOptimization(context: Context): Boolean {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+        val powerManager = context.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+        return powerManager.isIgnoringBatteryOptimizations(context.packageName)
+    }
+    return true
 }
 
 @Composable

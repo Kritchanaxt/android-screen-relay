@@ -14,10 +14,22 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import org.json.JSONObject
 
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.unit.toSize
+import androidx.compose.ui.geometry.Offset
+
 @Composable
 fun ViewerScreen(hostIp: String) {
     var bitmap by remember { mutableStateOf<Bitmap?>(null) }
     var status by remember { mutableStateOf("Connecting to $hostIp...") }
+    
+    // WebSocket Manager Reference to send commands
+    var wsManagerRef by remember { mutableStateOf<WebSocketManager?>(null) }
+    
+    // Layout info for touch scaling
+    var imageSize by remember { mutableStateOf(androidx.compose.ui.geometry.Size.Zero) }
 
     DisposableEffect(hostIp) {
         val wsManager = WebSocketManager("ws://$hostIp:8887") { message ->
@@ -29,16 +41,16 @@ fun ViewerScreen(hostIp: String) {
                     val decodedBytes = Base64.decode(base64String, Base64.NO_WRAP)
                     val decodedBitmap = BitmapFactory.decodeByteArray(decodedBytes, 0, decodedBytes.size)
                     
-                    // Update state (safe to do from any thread in Compose usually, but ensures recomposition)
+                    // Update state
                     bitmap = decodedBitmap
                     status = "Connected"
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
-                // status = "Error: ${e.message}" // Avoid rapid UI updates on error loops
             }
         }
         wsManager.connect()
+        wsManagerRef = wsManager
 
         onDispose {
             wsManager.disconnect()
@@ -47,11 +59,46 @@ fun ViewerScreen(hostIp: String) {
 
     Box(modifier = Modifier.fillMaxSize()) {
         if (bitmap != null) {
+            val bmp = bitmap!!
             Image(
-                bitmap = bitmap!!.asImageBitmap(),
+                bitmap = bmp.asImageBitmap(),
                 contentDescription = "Screen Stream",
-                modifier = Modifier.fillMaxSize(),
-                contentScale = ContentScale.Fit
+                modifier = Modifier
+                    .fillMaxSize()
+                    .onGloballyPositioned { coordinates ->
+                        imageSize = coordinates.size.toSize()
+                    }
+                    .pointerInput(Unit) {
+                        detectTapGestures { offset ->
+                            // Calculate scaling relative to the actual image size vs displayed size
+                            // This depends on ContentScale.Fit logic. For simplicity, we assume Fill or basic math.
+                            
+                            // Simple relative Mapping (Assuming full screen coverage or adjusting for aspect ratio later)
+                            // Ideally, we need the source resolution from the host safely.
+                            // For now, we send relative coordinates (0..1) or raw display coordinates if Host can handle it.
+                            // Best practice: Host expects raw pixels. Client sends normalized (0.0 - 1.0) and Host scales it up.
+                            
+                            val normX = offset.x / imageSize.width
+                            val normY = offset.y / imageSize.height
+                            
+                            // Send to Host. Host must interpret relative vs absolute. 
+                            // Our Host expects Absolute pixels currently.
+                            // To fix this properly, let's assume a standard 1080x1920 host for a moment OR
+                            // update Host to accept normalized coordinates (Better).
+                            
+                            // Temporary: Send generic normalized, Host side needs to scale.
+                            // But wait, our `RelayServer` expects just X, Y float.
+                            // Let's modify logic to send "Percent" and let Host multiply by screen width/height.
+                            
+                            val cmd = JSONObject()
+                            cmd.put("type", "click")
+                            cmd.put("x_percent", normX)
+                            cmd.put("y_percent", normY)
+                            
+                            wsManagerRef?.send(cmd.toString())
+                        }
+                    },
+                contentScale = ContentScale.FillBounds // Changed to FillBounds to make coordinate mapping easier for this MVP
             )
         } else {
             Text(text = status, modifier = Modifier.align(Alignment.Center))
