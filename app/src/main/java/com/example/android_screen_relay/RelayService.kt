@@ -84,25 +84,11 @@ class RelayService : Service() {
             
             if (resultCode != 0 && dataIntent != null) {
                 try {
-                    android.util.Log.d("RelayService", "Starting Screen Capture with ResultCode: $resultCode")
-                    screenCaptureManager.startCapture(resultCode, dataIntent) { message ->
-                         // Message is full JSON "{"type": "frame" ...}"
-                         // But broadcastImage expects Base64 OR it was calling broadcast(message)
-                         // Let's check RelayServer.broadcastImage
-                         // It takes base64Image string? No, ScreenCaptureManager emits full JSON string now.
-                         // Wait, ScreenCaptureManager emits: "{\"type\": \"frame\", \"data\": \"$base64String\"}"
-                         // RelayServer.broadcastImage(base64Image) constructs the JSON again!
-                         // We need to fix this flow.
-                         
-                         // The original code was: relayServer?.broadcast(message) (which sends to everyone)
-                         // Now we want to send to authenticated only.
-                         // But relayServer.broadcastImage wraps it in JSON again.
-                         // Let's modify ScreenCaptureManager to emit just Base64? Or modify RelayService to extract it?
-                         // Or modify RelayServer to have a general "broadcastToAuthenticated(fullJson)" function.
-                         
-                         // Hack: Parse the JSON here is slow.
-                         // Better: Add broadcastToAuthenticated to RelayServer.
-                        relayServer?.broadcastToAuthenticated(message)
+                    val quality = intent.getIntExtra("QUALITY_MODE", 1) // Default to Medium (1)
+                    android.util.Log.d("RelayService", "Starting Screen Capture with Quality: $quality")
+                    screenCaptureManager.startCapture(resultCode, dataIntent, quality) { imageBytes ->
+                        // Pass raw bytes to authenticated clients
+                        relayServer?.broadcastToAuthenticated(imageBytes)
                     }
                 } catch (e: Exception) {
                     android.util.Log.e("RelayService", "Error starting capture: ${e.message}")

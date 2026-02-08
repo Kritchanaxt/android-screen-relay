@@ -15,6 +15,8 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -44,6 +46,8 @@ import kotlinx.coroutines.delay
 
 class MainActivity : ComponentActivity() {
 
+    private var pendingQualityMode: Int = 1
+
     private val overlayPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) {
@@ -56,7 +60,7 @@ class MainActivity : ComponentActivity() {
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
         if (result.resultCode == Activity.RESULT_OK && result.data != null) {
-            startRelayService(result.resultCode, result.data!!)
+            startRelayService(result.resultCode, result.data!!, pendingQualityMode)
         }
     }
 
@@ -66,14 +70,17 @@ class MainActivity : ComponentActivity() {
         setContent {
             AndroidscreenrelayTheme {
                 AppNavigation(
-                    onStartService = { checkPermissionsAndStart() },
+                    onStartService = { quality -> checkPermissionsAndStart(quality) },
                     onStopService = { stopRelayService() }
                 )
             }
         }
     }
 
-    private fun checkPermissionsAndStart() {
+    private fun checkPermissionsAndStart(quality: Int? = null) {
+        if (quality != null) {
+            pendingQualityMode = quality
+        }
         if (!Settings.canDrawOverlays(this)) {
             val intent = Intent(
                 Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
@@ -87,10 +94,11 @@ class MainActivity : ComponentActivity() {
         screenCaptureLauncher.launch(mediaProjectionManager.createScreenCaptureIntent())
     }
 
-    private fun startRelayService(resultCode: Int, data: Intent) {
+    private fun startRelayService(resultCode: Int, data: Intent, qualityMode: Int) {
         val intent = Intent(this, RelayService::class.java).apply {
             putExtra("RESULT_CODE", resultCode)
             putExtra("DATA_INTENT", data)
+            putExtra("QUALITY_MODE", qualityMode)
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             startForegroundService(intent)
@@ -109,7 +117,7 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 fun AppNavigation(
-    onStartService: () -> Unit,
+    onStartService: (Int) -> Unit,
     onStopService: () -> Unit = {} // Add check later
 ) {
     var currentTab by remember { mutableStateOf(0) } // 0: Home, 1: Connect (Client), 2: Me
@@ -196,8 +204,8 @@ fun AppNavigation(
                 when (currentTab) {
                     0 -> HomeScreen(
                         isBroadcasting = isBroadcasting,
-                        onStartService = {
-                            onStartService()
+                        onStartService = { quality ->
+                            onStartService(quality)
                             isBroadcasting = true
                         },
                         onStopService = {
@@ -223,11 +231,12 @@ fun AppNavigation(
 @Composable
 fun HomeScreen(
     isBroadcasting: Boolean,
-    onStartService: () -> Unit,
+    onStartService: (Int) -> Unit,
     onStopService: () -> Unit,
     onScanClick: () -> Unit
 ) {
     var passkey by remember { mutableStateOf<String?>(null) }
+    var selectedQuality by remember { mutableStateOf(1) } // Default to HD
     
     // Poll for passkey update
     LaunchedEffect(isBroadcasting) {
@@ -245,10 +254,13 @@ fun HomeScreen(
     val deviceName = remember { "${Build.MANUFACTURER} ${Build.MODEL}" }
     // var showQrDialog by remember { mutableStateOf(false) } // Disabled for passkey mode
     
+    val scrollState = rememberScrollState()
+
     Column(
         modifier = Modifier
             .fillMaxSize()
             .background(Color(0xFFF5F7FA))
+            .verticalScroll(scrollState)
             .padding(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
@@ -335,6 +347,15 @@ fun HomeScreen(
 
         Spacer(modifier = Modifier.height(24.dp))
 
+        // Quality Selector
+        QualitySelector(
+            selectedQuality = selectedQuality,
+            onQualitySelected = { selectedQuality = it },
+            enabled = !isBroadcasting
+        )
+
+        Spacer(modifier = Modifier.height(24.dp))
+
         // Connection Status / My Devices
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -354,8 +375,7 @@ fun HomeScreen(
         // Start/Stop Broadcasting Action
         if (isBroadcasting) {
             Card(
-                onClick = { /* Handle disconnect confirmation dialog if needed */ },
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth(), // Removed onClick to avoid nested clickable issues
                 shape = RoundedCornerShape(16.dp),
                 colors = CardDefaults.cardColors(containerColor = Color.White),
                 elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
@@ -389,11 +409,16 @@ fun HomeScreen(
                      
                      Spacer(modifier = Modifier.height(24.dp))
                      
+                     // Remove fixed height to prevent clipping with custom fonts
                      Button(
                         onClick = onStopService,
-                        modifier = Modifier.fillMaxWidth().height(50.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF3B30)), // Red color
-                        shape = RoundedCornerShape(12.dp)
+                        modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = 48.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFFFF3B30), 
+                            contentColor = Color.White
+                        ),
+                        shape = RoundedCornerShape(12.dp),
+                        contentPadding = PaddingValues(vertical = 12.dp)
                      ) {
                         Icon(Icons.Filled.Stop, null)
                         Spacer(modifier = Modifier.width(8.dp))
@@ -403,7 +428,7 @@ fun HomeScreen(
             }
         } else {
             Card(
-                onClick = onStartService,
+                onClick = { onStartService(selectedQuality) },
                 modifier = Modifier.fillMaxWidth().height(80.dp),
                 shape = RoundedCornerShape(12.dp),
                 colors = CardDefaults.cardColors(containerColor = Color(0xFFE3F2FD))
@@ -446,7 +471,7 @@ fun HomeScreen(
         }
 
         
-        Spacer(modifier = Modifier.weight(1f))
+        Spacer(modifier = Modifier.height(32.dp))
         
         Text(
             "No target device? Check user guide",
@@ -830,4 +855,55 @@ fun ShowQRCodeDialog(ip: String, onDismiss: () -> Unit) {
         containerColor = Color.White,
         shape = RoundedCornerShape(16.dp)
     )
+}
+
+@Composable
+fun QualitySelector(
+    selectedQuality: Int,
+    onQualitySelected: (Int) -> Unit,
+    enabled: Boolean
+) {
+    Column {
+        Text("Video Quality", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        Spacer(modifier = Modifier.height(8.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            QualityOption(0, "Fast", selectedQuality, onQualitySelected, enabled, Modifier.weight(1f))
+            QualityOption(1, "HD", selectedQuality, onQualitySelected, enabled, Modifier.weight(1f))
+            QualityOption(2, "FHD", selectedQuality, onQualitySelected, enabled, Modifier.weight(1f))
+            QualityOption(3, "2K", selectedQuality, onQualitySelected, enabled, Modifier.weight(1f))
+        }
+    }
+}
+
+@Composable
+fun QualityOption(
+    idx: Int,
+    label: String,
+    selected: Int,
+    onSelect: (Int) -> Unit,
+    enabled: Boolean,
+    modifier: Modifier = Modifier
+) {
+    val isSelected = selected == idx
+    OutlinedButton(
+        onClick = { onSelect(idx) },
+        enabled = enabled,
+        modifier = modifier,
+        colors = ButtonDefaults.outlinedButtonColors(
+            containerColor = if (isSelected) Color(0xFFE3F2FD) else Color.Transparent,
+            contentColor = if (isSelected) Color(0xFF007AFF) else Color.Gray,
+            disabledContainerColor = if (isSelected) Color(0xFFE3F2FD).copy(alpha = 0.5f) else Color.Transparent,
+            disabledContentColor = if (isSelected) Color(0xFF007AFF).copy(alpha = 0.5f) else Color.LightGray.copy(alpha = 0.5f)
+        ),
+        border = androidx.compose.foundation.BorderStroke(
+            1.dp,
+            if (isSelected) Color(0xFF007AFF) else Color.LightGray
+        ),
+        contentPadding = PaddingValues(0.dp)
+    ) {
+        Text(label, fontSize = 12.sp, maxLines = 1)
+    }
 }

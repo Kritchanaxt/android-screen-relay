@@ -127,17 +127,27 @@ class RelayServer(port: Int) : WebSocketServer(InetSocketAddress(port)) {
         Log.d("RelayServer", "Server started on port $port")
     }
     
-    fun broadcastImage(base64Image: String) {
-        // Only broadcast to authenticated clients
-        val frameMsg = "{\"type\": \"frame\", \"data\": \"$base64Image\"}"
-        broadcastToAuthenticated(frameMsg)
+    fun broadcastImage(imageBytes: ByteArray) {
+        // Broadcast raw bytes to authenticated clients
+        broadcastToAuthenticated(imageBytes)
     }
-
+    
+    // Kept for legacy textual interface if needed (but we are moving to binary)
     fun broadcastToAuthenticated(message: String) {
         synchronized(authenticatedSessions) {
             for (client in authenticatedSessions) {
                 if (client.isOpen) {
                     client.send(message)
+                }
+            }
+        }
+    }
+
+    fun broadcastToAuthenticated(data: ByteArray) {
+        synchronized(authenticatedSessions) {
+            for (client in authenticatedSessions) {
+                if (client.isOpen) {
+                    client.send(data)
                 }
             }
         }

@@ -22,22 +22,63 @@ class ScreenCaptureManager(private val context: Context) {
     private var mediaProjection: MediaProjection? = null
     private var virtualDisplay: VirtualDisplay? = null
     private var imageReader: ImageReader? = null
-    // deleted webSocketManager
     private var backgroundThread: android.os.HandlerThread? = null
     private var backgroundHandler: android.os.Handler? = null
     
-    // Callback to send data
-    private var onFrameCaptured: ((String) -> Unit)? = null
+    private var onFrameCaptured: ((ByteArray) -> Unit)? = null
+    
+    // Configurable props
+    private var targetWidth = 0
+    private var targetHeight = 0
+    private var jpegQuality = 50
 
-    // Screen metrics
-    private val width = Resources.getSystem().displayMetrics.widthPixels / 2 // Downscale for performance
-    private val height = Resources.getSystem().displayMetrics.heightPixels / 2
     private val density = Resources.getSystem().displayMetrics.densityDpi
+    
+    private var reusableBitmap: Bitmap? = null
 
     @SuppressLint("WrongConstant")
-    fun startCapture(resultCode: Int, data: Intent, onFrameCaptured: (String) -> Unit) {
+    fun startCapture(resultCode: Int, data: Intent, qualityMode: Int, onFrameCaptured: (ByteArray) -> Unit) {
         this.onFrameCaptured = onFrameCaptured
         
+        // Configure Quality
+        val screenWidth = Resources.getSystem().displayMetrics.widthPixels
+        val screenHeight = Resources.getSystem().displayMetrics.heightPixels
+        
+        when(qualityMode) {
+            0 -> { // Low (Fast) - 480p approx
+                val scale = 0.4f
+                targetWidth = (screenWidth * scale).toInt()
+                targetHeight = (screenHeight * scale).toInt()
+                jpegQuality = 40
+            }
+            1 -> { // Medium (HD) - 720p approx
+                val scale = 0.6f
+                targetWidth = (screenWidth * scale).toInt()
+                targetHeight = (screenHeight * scale).toInt()
+                jpegQuality = 60
+            }
+            2 -> { // High (Full HD)
+                val scale = 1.0f // Native
+                targetWidth = screenWidth
+                targetHeight = screenHeight
+                jpegQuality = 75
+            }
+            3 -> { // Ultra (2K/Native High Quality)
+                targetWidth = screenWidth
+                targetHeight = screenHeight
+                jpegQuality = 90
+            }
+            else -> {
+                targetWidth = screenWidth / 2
+                targetHeight = screenHeight / 2
+                jpegQuality = 50
+            }
+        }
+        
+        // Ensure even dimensions for video encoding standards (though we use JPEG, it's safer for ImageReader)
+        if (targetWidth % 2 != 0) targetWidth--
+        if (targetHeight % 2 != 0) targetHeight--
+
         // Start background thread
         backgroundThread = android.os.HandlerThread("ScreenCaptureThread")
         backgroundThread?.start()
@@ -46,7 +87,6 @@ class ScreenCaptureManager(private val context: Context) {
         val mpManager = context.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
         mediaProjection = mpManager.getMediaProjection(resultCode, data)
 
-        // Register callback to handle stop
         mediaProjection?.registerCallback(object : MediaProjection.Callback() {
             override fun onStop() {
                 super.onStop()
@@ -55,15 +95,17 @@ class ScreenCaptureManager(private val context: Context) {
         }, backgroundHandler)
 
         // Setup ImageReader
-        // PixelFormat.RGBA_8888 is standard
-        imageReader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2)
+        imageReader = ImageReader.newInstance(targetWidth, targetHeight, PixelFormat.RGBA_8888, 2)
         
         virtualDisplay = mediaProjection?.createVirtualDisplay(
             "ScreenCapture",
-            width, height, density,
+            targetWidth, targetHeight, density,
             DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
             imageReader!!.surface, null, backgroundHandler
         )
+        
+        val width = targetWidth
+        val height = targetHeight
 
         imageReader?.setOnImageAvailableListener({ reader ->
             val image = reader.acquireLatestImage() ?: return@setOnImageAvailableListener
@@ -73,24 +115,25 @@ class ScreenCaptureManager(private val context: Context) {
                 val pixelStride = planes[0].pixelStride
                 val rowStride = planes[0].rowStride
                 val rowPadding = rowStride - pixelStride * width
+                
+                val totalWidth = width + rowPadding / pixelStride
 
-                // Create bitmap
-                val bitmap = Bitmap.createBitmap(
-                    width + rowPadding / pixelStride,
-                    height,
-                    Bitmap.Config.ARGB_8888
-                )
-                bitmap.copyPixelsFromBuffer(buffer)
+                if (reusableBitmap == null || reusableBitmap!!.width != totalWidth || reusableBitmap!!.height != height) {
+                    reusableBitmap?.recycle()
+                    reusableBitmap = Bitmap.createBitmap(totalWidth, height, Bitmap.Config.ARGB_8888)
+                }
+
+                reusableBitmap!!.copyPixelsFromBuffer(buffer)
                 
-                // Crop the bitmap (remove padding) if necessary
-                val croppedBitmap = Bitmap.createBitmap(bitmap, 0, 0, width, height)
-                
-                sendBitmap(croppedBitmap)
-                
-                bitmap.recycle()
-                // croppedBitmap.recycle() // Recycled inside sendBitmap logic eventually or rely on GC
+                if (rowPadding == 0) {
+                    sendBitmap(reusableBitmap!!)
+                } else { 
+                    val croppedBitmap = Bitmap.createBitmap(reusableBitmap!!, 0, 0, width, height)
+                    sendBitmap(croppedBitmap)
+                    croppedBitmap.recycle()
+                }
             } catch (e: Exception) {
-                Log.e("ScreenCapture", "Error processing image: ${e.message}")
+                // Log.e("ScreenCapture", "Error processing image: ${e.message}")
             } finally {
                 image.close()
             }
@@ -98,34 +141,37 @@ class ScreenCaptureManager(private val context: Context) {
     }
 
     private fun sendBitmap(bitmap: Bitmap) {
-        // Compress to JPEG and send
-        CoroutineScope(Dispatchers.IO).launch {
+        try {
             val outputStream = ByteArrayOutputStream()
-            bitmap.compress(Bitmap.CompressFormat.JPEG, 50, outputStream)
+            bitmap.compress(Bitmap.CompressFormat.JPEG, jpegQuality, outputStream)
             val imageBytes = outputStream.toByteArray()
-            val base64String = Base64.encodeToString(imageBytes, Base64.NO_WRAP)
-            
-            // Simple JSON protocol
-            val jsonMessage = "{\"type\": \"frame\", \"data\": \"$base64String\"}"
-            onFrameCaptured?.invoke(jsonMessage)
+            onFrameCaptured?.invoke(imageBytes)
+        } catch (e: Exception) {
+            e.printStackTrace()
         }
     }
 
     fun stopCapture() {
-        mediaProjection?.stop()
+        try {
+            mediaProjection?.stop()
+        } catch(e: Exception) {}
         mediaProjection = null
-        virtualDisplay?.release()
+        
+        try {
+            virtualDisplay?.release()
+        } catch(e: Exception) {}
         virtualDisplay = null
-        imageReader?.close()
+        
+        try {
+            imageReader?.close()
+        } catch(e: Exception) {}
         imageReader = null
         
         backgroundThread?.quitSafely()
-        try {
-            backgroundThread?.join()
-            backgroundThread = null
-            backgroundHandler = null
-        } catch (e: InterruptedException) {
-            e.printStackTrace()
-        }
+        backgroundThread = null // Don't join, just let it die
+        backgroundHandler = null
+        
+        reusableBitmap?.recycle()
+        reusableBitmap = null
     }
 }
