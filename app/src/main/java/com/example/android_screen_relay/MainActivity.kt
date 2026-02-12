@@ -22,6 +22,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.filled.Terminal // Ensure this is explicitly imported or covered by * if available in your version
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -122,52 +123,36 @@ fun AppNavigation(
 ) {
     var currentTab by remember { mutableStateOf(0) } // 0: Home, 1: Connect (Client), 2: Me
     var isViewerMode by remember { mutableStateOf(false) }
-    var isScanning by remember { mutableStateOf(false) }
+    var isLogViewerOpen by remember { mutableStateOf(false) } // State for Log Viewer
+    var isPermissionSettingsOpen by remember { mutableStateOf(false) } // State for Permission Settings
+    
     var targetIp by remember { mutableStateOf("") }
-    var connectionPasskey by remember { mutableStateOf("") } // Store passkey for auth
+    var connectionPasskey by remember { mutableStateOf("") }
     
     // Simple state to track only for UI toggling (Real app should observe service state)
     var isBroadcasting by remember { mutableStateOf(false) }
 
-    if (isScanning) {
-        val context = LocalContext.current
-        var hasCameraPermission by remember {
-            mutableStateOf(
-                androidx.core.content.ContextCompat.checkSelfPermission(
-                    context, 
-                    android.Manifest.permission.CAMERA
-                ) == android.content.pm.PackageManager.PERMISSION_GRANTED
-            )
-        }
-        
-        QRScannerScreen(
-            onQrCodeScanned = { result ->
-                // Basic extraction if it's a full URL e.g. ws://192.168.1.5:8887
-                // Or just IP
-                val ip = result.removePrefix("ws://").substringBefore(":")
-                targetIp = ip
-                isScanning = false
-                isViewerMode = true
-                // Note: QrCode scan is legacy now? Or we should embed passkey in QR?
-                // If we use passkey mode, QR might not be useful for Auth unless it contains the key.
-            },
-            onClose = { isScanning = false }
-        )
+    if (isLogViewerOpen) {
+        LogViewerScreen(onBack = { isLogViewerOpen = false })
+    } else if (isPermissionSettingsOpen) {
+        PermissionSettingsScreen(onBack = { isPermissionSettingsOpen = false })
     } else if (isViewerMode) {
-        ViewerScreen(hostIp = targetIp, passkey = connectionPasskey)
-        // Add a floating back button to exit viewer
-        Box(modifier = Modifier.fillMaxSize()) {
-            FloatingActionButton(
-                onClick = { isViewerMode = false },
-                modifier = Modifier
-                    .align(Alignment.TopStart)
-                    .padding(32.dp)
-                    .statusBarsPadding(),
-                containerColor = Color.Red,
-                contentColor = Color.White
-            ) {
-                Icon(Icons.Filled.Close, "Exit")
-            }
+        // Viewer Screen logic restored
+        if(targetIp.isNotEmpty() && connectionPasskey.isNotEmpty()) {
+             ViewerScreen(hostIp = targetIp, passkey = connectionPasskey)
+             
+             // Simple back button overlay for viewer
+             Box(modifier = Modifier.fillMaxSize()) {
+                 FloatingActionButton(
+                    onClick = { isViewerMode = false },
+                    modifier = Modifier.align(Alignment.TopStart).padding(16.dp),
+                    containerColor = Color.Red
+                 ){
+                    Icon(Icons.Filled.Close, "Exit", tint = Color.White)
+                 }
+             }
+        } else {
+             isViewerMode = false // Fallback
         }
     } else {
         Scaffold(
@@ -191,7 +176,7 @@ fun AppNavigation(
                         colors = NavigationBarItemDefaults.colors(indicatorColor = Color(0xFFE3F2FD))
                     )
                     NavigationBarItem(
-                        icon = { Icon(Icons.Filled.Person, contentDescription = "Me") },
+                        icon = { Icon(Icons.Filled.Person, contentDescription = "Me") }, // Reused Settings Icon for Me Screen or just skip Connect
                         label = { Text("Me") },
                         selected = currentTab == 2,
                         onClick = { currentTab = 2 },
@@ -201,18 +186,27 @@ fun AppNavigation(
             }
         ) { innerPadding ->
             Box(modifier = Modifier.padding(innerPadding)) {
+                val context = LocalContext.current
+                
                 when (currentTab) {
                     0 -> HomeScreen(
                         isBroadcasting = isBroadcasting,
                         onStartService = { quality ->
-                            onStartService(quality)
-                            isBroadcasting = true
+                            // Check permissions first!
+                            val isOverlay = Settings.canDrawOverlays(context)
+                            val isBattery = checkBatteryOptimization(context)
+                            
+                            if (isOverlay && isBattery) {
+                                onStartService(quality)
+                                isBroadcasting = true
+                            } else {
+                                isPermissionSettingsOpen = true
+                            }
                         },
                         onStopService = {
                              onStopService()
                              isBroadcasting = false
-                        },
-                        onScanClick = { isScanning = true }
+                        }
                     )
                     1 -> ConnectScreen(
                         onConnect = { ip, key ->
@@ -221,7 +215,10 @@ fun AppNavigation(
                             isViewerMode = true
                         }
                     )
-                    2 -> MeScreen()
+                    2 -> MeScreen(
+                        onPermissionGuideClick = { isPermissionSettingsOpen = true },
+                        onLogClick = { isLogViewerOpen = true }
+                    )
                 }
             }
         }
@@ -232,8 +229,7 @@ fun AppNavigation(
 fun HomeScreen(
     isBroadcasting: Boolean,
     onStartService: (Int) -> Unit,
-    onStopService: () -> Unit,
-    onScanClick: () -> Unit
+    onStopService: () -> Unit
 ) {
     var passkey by remember { mutableStateOf<String?>(null) }
     var selectedQuality by remember { mutableStateOf(1) } // Default to HD
@@ -252,7 +248,6 @@ fun HomeScreen(
     }
 
     val deviceName = remember { "${Build.MANUFACTURER} ${Build.MODEL}" }
-    // var showQrDialog by remember { mutableStateOf(false) } // Disabled for passkey mode
     
     val scrollState = rememberScrollState()
 
@@ -269,7 +264,7 @@ fun HomeScreen(
         // Header
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
+            horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
@@ -279,13 +274,6 @@ fun HomeScreen(
                     color = Color(0xFF1A1A1A)
                 )
             )
-            IconButton(onClick = onScanClick) {
-                Icon(
-                    imageVector = Icons.Filled.QrCodeScanner,
-                    contentDescription = "Scan",
-                    tint = Color(0xFF007AFF)
-                )
-            }
         }
 
         Spacer(modifier = Modifier.height(24.dp))
@@ -628,10 +616,14 @@ fun RowScope.ToolCard(name: String, icon: ImageVector, color: Color) {
 }
 
 @Composable
-fun MeScreen() {
+fun MeScreen(
+    onPermissionGuideClick: () -> Unit,
+    onLogClick: () -> Unit
+) {
     val context = LocalContext.current
     var isAccessibilityEnabled by remember { mutableStateOf(checkAccessibilityPermission(context)) }
     var isBatteryOptimized by remember { mutableStateOf(checkBatteryOptimization(context)) }
+    var isOverlayEnabled by remember { mutableStateOf(Settings.canDrawOverlays(context)) }
     
     // Resume check
     val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
@@ -640,6 +632,7 @@ fun MeScreen() {
             if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
                 isAccessibilityEnabled = checkAccessibilityPermission(context)
                 isBatteryOptimized = checkBatteryOptimization(context)
+                isOverlayEnabled = Settings.canDrawOverlays(context)
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -650,6 +643,7 @@ fun MeScreen() {
         modifier = Modifier
             .fillMaxSize()
             .background(Color(0xFFF5F7FA))
+            .verticalScroll(rememberScrollState())
     ) {
         // Header
         Box(
@@ -679,11 +673,15 @@ fun MeScreen() {
 
         Spacer(modifier = Modifier.height(12.dp))
         
-        // System Permissions
+        // System Permissions (Removed as per user request to move to advanced/guide only)
+        // See "Permission Setup Guide" below
+
+        // Setup Guide & Logs (New Section)
+        Spacer(modifier = Modifier.height(12.dp))
         Text(
-            "System Permissions",
+            "Advanced",
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-            style = MaterialTheme.typography.titleSmall,
+            style = MaterialTheme.typography.titleSmall, 
             color = Color.Gray
         )
         
@@ -693,29 +691,16 @@ fun MeScreen() {
                 .background(Color.White)
                 .padding(vertical = 8.dp)
         ) {
-             PermissionItem(
-                title = "Remote Control (Touch)",
-                subtitle = "Required for remote clicks",
-                isEnabled = isAccessibilityEnabled,
-                onClick = { 
-                    val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
-                    intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                    context.startActivity(intent)
-                }
+            MenuItem(
+                icon = Icons.Filled.VerifiedUser, 
+                text = "Permission Setup Guide", 
+                onClick = onPermissionGuideClick
             )
             Divider(color = Color(0xFFF0F0F0))
-             PermissionItem(
-                title = "Run in Background",
-                subtitle = "Prevent app from being killed",
-                isEnabled = isBatteryOptimized,
-                onClick = {
-                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !isBatteryOptimized) {
-                        val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
-                        intent.data = Uri.parse("package:${context.packageName}")
-                        intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                        context.startActivity(intent)
-                    }
-                }
+            MenuItem(
+                icon = Icons.Filled.Terminal, 
+                text = "Connection Logs", 
+                onClick = onLogClick
             )
         }
 
@@ -728,12 +713,14 @@ fun MeScreen() {
                 .background(Color.White)
                 .padding(vertical = 8.dp)
         ) {
-            MenuItem(Icons.Filled.Settings, "Settings")
+            MenuItem(Icons.Filled.Settings, "App Settings", onClick = {})
             Divider(color = Color(0xFFF0F0F0))
-            MenuItem(Icons.Filled.Help, "Help Center")
+            MenuItem(Icons.Filled.Help, "Help Center", onClick = {})
             Divider(color = Color(0xFFF0F0F0))
-            MenuItem(Icons.Filled.Info, "About Us")
+            MenuItem(Icons.Filled.Info, "About Us", onClick = {})
         }
+        
+        Spacer(modifier = Modifier.height(32.dp))
     }
 }
 
@@ -772,10 +759,11 @@ fun checkBatteryOptimization(context: Context): Boolean {
 }
 
 @Composable
-fun MenuItem(icon: ImageVector, text: String) {
+fun MenuItem(icon: ImageVector, text: String, onClick: () -> Unit = {}) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .clickable(onClick = onClick)
             .padding(16.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -806,56 +794,6 @@ fun getLocalIpAddress(): String? {
     return null
 }
 
-@Composable
-fun ShowQRCodeDialog(ip: String, onDismiss: () -> Unit) {
-    val qrBitmap = remember(ip) {
-        QRCodeUtils.generateQRCode("ws://$ip:8887", 512, 512)
-    }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        confirmButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Close")
-            }
-        },
-        title = {
-            Text("Scan to Connect")
-        },
-        text = {
-            Column(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                if (qrBitmap != null) {
-                    androidx.compose.foundation.Image(
-                        bitmap = qrBitmap.asImageBitmap(),
-                        contentDescription = "QR Code",
-                        modifier = Modifier
-                            .size(250.dp)
-                            .clip(RoundedCornerShape(12.dp))
-                    )
-                } else {
-                    Text("Error generating QR Code")
-                }
-                Spacer(modifier = Modifier.height(16.dp))
-                Text(
-                    text = ip,
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold,
-                    color = Color(0xFF007AFF)
-                )
-                Text(
-                    text = "Ensure devices are on the same Wi-Fi",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = Color.Gray
-                )
-            }
-        },
-        containerColor = Color.White,
-        shape = RoundedCornerShape(16.dp)
-    )
-}
 
 @Composable
 fun QualitySelector(

@@ -16,6 +16,7 @@ class RelayServer(port: Int) : WebSocketServer(InetSocketAddress(port)) {
 
     fun updatePasskey(passkey: String?) {
         this.currentPasskey = passkey
+        LogRepository.addLog("Passkey updated: $passkey", LogRepository.LogType.INFO)
         if (passkey == null) {
             // If passkey is cleared/reset, disconnect everyone or just invalidate?
             // Disconnecting is safer
@@ -25,24 +26,35 @@ class RelayServer(port: Int) : WebSocketServer(InetSocketAddress(port)) {
     }
 
     override fun onOpen(conn: WebSocket, handshake: ClientHandshake) {
-        Log.d("RelayServer", "New connection from " + conn.remoteSocketAddress)
-        // Enforce timeout for auth?
-        // Basic timer to kick if not authed in 5 seconds
+        val remoteAddr = conn.remoteSocketAddress?.address?.hostAddress ?: "Unknown"
+        val descriptor = handshake.resourceDescriptor
+        
+        val msg = "NEW CONNECTION: IP=$remoteAddr | Resource=$descriptor"
+        Log.d("RelayServer", msg)
+        LogRepository.addLog(msg, LogRepository.LogType.INFO)
+        
+        // Enforce timeout for auth
         kotlinx.coroutines.GlobalScope.launch {
             kotlinx.coroutines.delay(5000)
             if (conn.isOpen && !authenticatedSessions.contains(conn)) {
+                val timeoutMsg = "Auth Timeout: Disconnecting $remoteAddr"
+                LogRepository.addLog(timeoutMsg, LogRepository.LogType.ERROR)
                 conn.close(1008, "Authentication timeout")
             }
         }
     }
 
     override fun onClose(conn: WebSocket, code: Int, reason: String, remote: Boolean) {
-        Log.d("RelayServer", "Closed connection to " + conn.remoteSocketAddress)
+        val remoteAddr = conn.remoteSocketAddress?.address?.hostAddress ?: "Unknown"
+        val who = if (remote) "Remote" else "Local"
+        val msg = "DISCONNECTED: $remoteAddr | Code=$code | Reason=$reason | By=$who"
+        
+        Log.d("RelayServer", msg)
+        LogRepository.addLog(msg, LogRepository.LogType.INFO)
         authenticatedSessions.remove(conn)
     }
 
     override fun onMessage(conn: WebSocket, message: String) {
-        // Log.d("RelayServer", "Message from client: $message")
         try {
             val json = org.json.JSONObject(message)
             val type = json.optString("type")
@@ -50,30 +62,54 @@ class RelayServer(port: Int) : WebSocketServer(InetSocketAddress(port)) {
             // SECURITY CHECK: Authentication
             if (type == "auth") {
                 val attemptKey = json.optString("key")
+                val remoteAddr = conn.remoteSocketAddress?.address?.hostAddress ?: "?"
+                
+                LogRepository.addLog("AUTH REQUEST: From $remoteAddr with key '******'", LogRepository.LogType.INCOMING)
+                
                 if (currentPasskey != null && attemptKey == currentPasskey) {
                     authenticatedSessions.add(conn)
                     val response = org.json.JSONObject()
                     response.put("type", "auth_response")
                     response.put("status", "ok")
                     conn.send(response.toString())
-                    Log.d("RelayServer", "Client authenticated: " + conn.remoteSocketAddress)
+                    
+                    val msg = "AUTH SUCCESS: Client $remoteAddr is now authenticated."
+                    Log.d("RelayServer", msg)
+                    LogRepository.addLog(msg, LogRepository.LogType.INFO)
                 } else {
                     val response = org.json.JSONObject()
                     response.put("type", "auth_response")
                     response.put("status", "failed")
                     conn.send(response.toString())
-                    conn.close(1008, "Invalid Passkey")
-                    Log.w("RelayServer", "Auth failed for: " + conn.remoteSocketAddress)
+                    conn.close(1008, "Invalid Passkey") // Specific close code
+                    
+                    val failMsg = "AUTH FAILED: Invalid passkey from $remoteAddr"
+                    Log.w("RelayServer", failMsg)
+                    LogRepository.addLog(failMsg, LogRepository.LogType.ERROR)
                 }
                 return
             }
 
             // Reject all other messages if not authenticated
             if (!authenticatedSessions.contains(conn)) {
-                // Ignore or close?
-                // conn.close(1008, "Not Authenticated") // Aggressive
                 return 
             }
+            
+            // Log command details
+            val detail = when (type) {
+                "click" -> {
+                    if (json.has("x_percent")) "Click(${json.optDouble("x_percent")}, ${json.optDouble("y_percent")})"
+                    else "Click(${json.optDouble("x")}, ${json.optDouble("y")})"
+                }
+                "swipe" -> "Swipe(${json.optInt("duration")}ms)"
+                "back" -> "Action: BACK"
+                "home" -> "Action: HOME"
+                "recent" -> "Action: RECENT"
+                else -> "Data: $message"
+            }
+            LogRepository.addLog("CMD RX: $detail", LogRepository.LogType.INCOMING)
+            
+            // ... (Rest of logic remains same, just logging above)
             
             when (type) {
                 "click" -> {
@@ -120,16 +156,20 @@ class RelayServer(port: Int) : WebSocketServer(InetSocketAddress(port)) {
 
     override fun onError(conn: WebSocket?, ex: Exception) {
         Log.e("RelayServer", "Error: ${ex.message}")
+        LogRepository.addLog("Error: ${ex.message}", LogRepository.LogType.ERROR)
         ex.printStackTrace()
     }
 
     override fun onStart() {
-        Log.d("RelayServer", "Server started on port $port")
+        val msg = "Server started on port $port"
+        Log.d("RelayServer", msg)
+        LogRepository.addLog(msg, LogRepository.LogType.INFO)
     }
     
     fun broadcastImage(imageBytes: ByteArray) {
         // Broadcast raw bytes to authenticated clients
         broadcastToAuthenticated(imageBytes)
+        // LogRepository.addLog("TX: Image Frame (${imageBytes.size} bytes)", LogRepository.LogType.OUTGOING) // Too spammy? Maybe log every 30 frames?
     }
     
     // Kept for legacy textual interface if needed (but we are moving to binary)
@@ -140,6 +180,12 @@ class RelayServer(port: Int) : WebSocketServer(InetSocketAddress(port)) {
                     client.send(message)
                 }
             }
+        }
+        // Don't log heartbeat content fully if it is heartbeat
+        if (message.contains("heartbeat")) {
+             // LogRepository.addLog("TX: Heartbeat", LogRepository.LogType.OUTGOING)
+        } else {
+             LogRepository.addLog("TX: $message", LogRepository.LogType.OUTGOING)
         }
     }
 

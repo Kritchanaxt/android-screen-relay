@@ -45,6 +45,8 @@ class RelayService : Service() {
             relayServer?.updatePasskey(passkey) // Set the passkey
             relayServer?.start()
             android.util.Log.d("RelayService", "RelayServer started on port 8887")
+            // Start heartbeat for testing background connectivity
+            startHeartbeat()
         } catch (e: Exception) {
             e.printStackTrace()
         }
@@ -118,6 +120,31 @@ class RelayService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? {
         return null
+    }
+
+    private fun startHeartbeat() {
+        var counter = 0
+        scope.launch {
+            while (isActive) {
+                delay(1000)
+                try {
+                    val statusJson = org.json.JSONObject()
+                    statusJson.put("type", "heartbeat")
+                    statusJson.put("timestamp", System.currentTimeMillis())
+                    statusJson.put("alive", true)
+                    statusJson.put("is_background", true) // Indicator for testing
+                    relayServer?.broadcastToAuthenticated(statusJson.toString())
+                    
+                    // Log heartbeat less frequently to avoid spam (every 5s)
+                    counter++
+                    if (counter % 5 == 0) {
+                        LogRepository.addLog("Heartbeat sent (Background: True) [x5]", LogRepository.LogType.OUTGOING)
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+            }
+        }
     }
 
     private fun createNotificationChannel() {

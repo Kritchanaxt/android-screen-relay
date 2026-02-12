@@ -48,6 +48,10 @@ object NetworkDiscovery {
                         val message = String(packet.data, 0, packet.length).trim()
                         if (message.startsWith(PREFIX_DISCOVER)) {
                             val requestedPasskey = message.substringAfter(PREFIX_DISCOVER)
+                            val remoteIp = packet.address.hostAddress
+                            
+                            LogRepository.addLog("DISCOVERY: Packet from $remoteIp asking for $requestedPasskey", LogRepository.LogType.INCOMING)
+                            
                             if (requestedPasskey == passkey) {
                                 // Match! Send our IP details back to the sender
                                 // We reply directly to the sender's IP/Port
@@ -59,6 +63,8 @@ object NetworkDiscovery {
                                 val responsePayload = "$PREFIX_OFFER$myIp:$port"
                                 val responseBytes = responsePayload.toByteArray()
                                 
+                                LogRepository.addLog("DISCOVERY: Match! Sending OFFER to $remoteIp", LogRepository.LogType.OUTGOING)
+                                
                                 val replyPacket = DatagramPacket(
                                     responseBytes,
                                     responseBytes.size,
@@ -67,6 +73,8 @@ object NetworkDiscovery {
                                 )
                                 socket?.send(replyPacket)
                                 android.util.Log.d("NetworkDiscovery", "Replied to discovery from ${packet.address}")
+                            } else {
+                                LogRepository.addLog("DISCOVERY: Ignored (Passkey mismatch)", LogRepository.LogType.INFO)
                             }
                         }
                     } catch (e: java.net.SocketTimeoutException) {
