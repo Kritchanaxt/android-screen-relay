@@ -132,7 +132,7 @@ fun PermissionSettingsScreen(onBack: () -> Unit) {
                     description = "Required to show 'On Air' status in notification bar.",
                     icon = Icons.Filled.Notifications,
                     isGranted = isNotificationGranted,
-                    buttonText = if (isNotificationGranted) "Enabled" else "Allow",
+                    buttonText = "to Settings",
                     onClick = {
                         if (!isNotificationGranted) {
                             notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)

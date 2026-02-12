@@ -1,90 +1,123 @@
-# Android Screen Relay (System Relay MVP)
-
-## 🎯 MVP Focus (Current Phase)
-
-This project is currently focused on building a **system-level Android relay service** with the following guarantees:
-
-- Persistent background execution (Foreground Service)
-- WebSocket-based command & data channel
-- Overlay / floating window capability
-- App lifecycle awareness (foreground / background / killed)
-- Designed to auto-recover from system kill (START_STICKY)
-
-Screen streaming is a **secondary capability** built on top of this foundation.
-
-## 🧪 What Can Be Tested Right Now
-
-- WebSocket server runs inside the app
-- Service keeps running even when app is backgrounded
-- Data is continuously sent through WebSocket
-- App survives screen-off state
+# Android Screen Relay
+### System-level Android Relay Service for Background Control & Device Integration
+*(Designed for industrial / system use cases - hardware integration ready)*
 
 ---
 
-Android Screen Relay คือรากฐานระบบ Android สำหรับการสื่อสารและควบคุมระยะไกลแบบ Peer-to-Peer โดยเน้นความเสถียรของ Background Process เป็นหัวใจสำคัญ
+Android Screen Relay คือรากฐานระบบ **System-level Android Application** ที่ถูกออกแบบมาเพื่อการทำงานเบื้องหลัง (Background Execution) อย่างเสถียร โดยทำหน้าที่เป็น "ตัวกลาง" (Relay) ในการเชื่อมต่อ สั่งการ และตรวจสอบสถานะของอุปกรณ์ Android ผ่านระบบเครือข่าย
 
-## ✨ ความสามารถหลัก (Core Capabilities)
+โปรเจกต์นี้**ไม่ใช่แค่แอป Screen Mirroring ทั่วไป** แต่เป็นโครงสร้างพื้นฐาน (Infrastructure) สำหรับงานระบบที่ต้องการ reliability สูง เช่น ตู้ Kiosk, IoT Controllers, หรือ Industrial Displays
 
-### 🛡️ การทำงานต่อเนื่องระดับระบบ (System-Level Persistence)
-*   **(Core Goal)** **ทำงานเบื้องหลังตลอดเวลา:** Service ทำงานต่อเนื่องแม้จะปิดหน้าจอหรือย่อแอป
-*   **(Core Goal)** **ความเสถียรสูง:** ตั้งค่าแบบ `START_STICKY` และยกเว้นการประหยัดพลังงาน (Battery Optimization) เพื่อป้องกันไม่ให้ระบบปิดการทำงานของแอป
-*   **เริ่มทำงานอัตโนมัติ:** รองรับ `BootReceiver` สำหรับเริ่มระบบใหม่
+## 🎯 System-Level Design Goals (เป้าหมายการออกแบบ)
 
-### 📡 WebSocket & Connectivity
-*   **Embedded Server:** มี WebSocket Server ฝังในตัวเพื่อเป็นท่อส่งข้อมูล (Data Pipeline)
-*   **Two-way Communication:** รองรับการรับ-ส่งข้อมูลแบบ Real-time
-*   **Local Network:** ทำงานในวง LAN ไม่ต้องออกอินเทอร์เน็ต
+โปรเจกต์นี้ถูกออกแบบโดยเน้นหลักการสำคัญ:
 
-### ⚙️ ส่วนเสริม (Modules)
-*   **Overlay & Floating Window:** แสดงผลทับแอปอื่นได้ (Overlay Capability)
-*   **Screen Mirroring:** (Module) สามารถส่งภาพหน้าจอได้ (รองรับความละเอียดสูงถึง 2K ในสภาพแวดล้อมที่เหมาะสม)
-*   **Remote Control:** (Module) รองรับการสั่งงานสัมผัสผ่าน Accessibility Service
-
-## 🛠 เทคโนโลยีที่ใช้ (Tech Stack)
-
-*   **ภาษา:** Kotlin
-*   **Core Components:**
-    *   `ForegroundService` (หัวใจหลักสำหรับการรัน Background)
-    *   `Java-WebSocket` (ท่อส่งข้อมูลหลัก)
-    *   `AccessibilityService` (Permission ระดับระบบ)
-*   **UI:** Jetpack Compose (Material 3)
-*   **Android APIs:**
-    *   `MediaProjectionManager`
-    *   `BootReceiver`
-    *   `CameraX` & `ZXing`
-
-## 📱 วิธีใช้งาน (How to Use)
-
-### 1. ข้อกำหนดเบื้องต้น
-*   อุปกรณ์ต้องอยู่ใน **Wi-Fi วงเดียวกัน** (สำหรับการทดสอบ WebSocket)
-*   Android SDK ขั้นต่ำ: 24 (Android 7.0)
-
-### 2. การตั้งค่าสิทธิ์ (Permissions Setup)
-*สำคัญมากสำหรับการทดสอบ Background Process:*
-*   ไปที่แท็บ **Me > System Permissions**
-*   **Run in Background:** ต้องอนุญาต (ปิด Battery Optimization)
-*   **Floating Windows:** ต้องอนุญาต (ถ้าต้องการทดสอบ Overlay)
-*   **Remote Control:** เปิด Accessibility หากต้องการเทส input
-
-### 3. การทดสอบ (Testing Flow)
-1.  เปิดแอปและกด **"Start Broadcasting"** (เพื่อเริ่ม Service)
-2.  สังเกตสัญลักษณ์ "On Air" (Overlay)
-3.  **Test Case 1:** กดปุ่ม Home เพื่อยุบแอป -> ตรวจสอบว่า WebSocket ยังเชื่อมต่อได้
-4.  **Test Case 2:** ปิดหน้าจอ (Screen Off) -> ตรวจสอบว่า Service ยังทำงาน
-
-## 🔧 บันทึกการปรับปรุงระบบ (Engineering Log)
-
-### 1. ความเสถียรของ Service
-- **Optimization:** ปรับใช้ `START_STICKY` ใน Service และจัดการ Threading ให้แยกออกจาก Main UI เพื่อป้องกัน ANR (App Not Responding)
-- **Result:** แอปสามารถรันต่อเนื่องได้ยาวนานขึ้นโดยไม่ถูก Kill โดยง่าย
-
-### 2. ประสิทธิภาพการส่งข้อมูล (Protocol Efficiency)
-- **Optimization:** เปลี่ยนการส่งข้อมูลภาพเป็น Raw Binary Streams แทน Base64 โดยปรับจูน Payload Size ให้เหมาะสมกับเครือข่าย
-- **Result:** ลด Latency และ Overhead ของ CPU ในการแปลงข้อมูล
-
-### 3. UI/UX Scaling
-- **Fix:** ปรับปรุง Layout ให้รองรับหน้าจอหลากหลายขนาด และแก้ไขปุ่มตกขอบในบางรุ่น
-- **Result:** การควบคุม Flow การเปิด-ปิด Service ทำได้ราบรื่น
+1.  **Persistent Background Execution**: ระบบต้องทำงานได้ตลอดเวลา (24/7) ผ่าน Foreground Service แม้จะปิดหน้าจอหรือสลับแอป
+2.  **Auto-Restart & Recovery**: กลยุทธ์การกู้คืนระบบอัตโนมัติเมื่อ Service ถูก Kill (ใช้ `START_STICKY` + Recovery-ready design) เพื่อให้ระบบกลับมาทำงานเองได้ (Unattended Use)
+3.  **System Communication Bus**: ใช้ WebSocket เป็นท่อส่งข้อมูลหลักสำหรับการควบคุมไม่ใช่แค่ Streaming
+4.  **Non-Intrusive Status**: การแจ้งเตือนสถานะต้องไม่รบกวนหน้าจอหลัก (Overlay/Notification)
+5.  **Hardware Integration Ready**: โครงสร้าง Code เตรียมพร้อมสำหรับเชื่อมต่อกับ module ภายนอก
 
 ---
-*Project Status: Active Development (Updating Core Relay System)*
+
+## 🏗 System Capabilities
+
+### 1️⃣ Core System Capabilities (MVP Focus)
+*   **Foreground Service Persistence**: Service ที่ "ตายยาก" (Sticky Service) และกู้คืนตัวเองได้
+*   **Structured System Logging**: ระบบ Log แบบ JSON Parsing ที่ละเอียดระดับ Component พร้อม Export
+*   **Overlay Status**: การแสดงสถานะ "On Air" แบบลอยเหนือแอปอื่น
+*   **Battery Optimization Handling**: ระบบจัดการ Permission เพื่อขอสิทธิ์ทำงานเบื้องหลัง
+
+### 2️⃣ Extended Capabilities (Optional)
+*   **Screen Streaming**: การส่งภาพหน้าจอแบบ Real-time (Binary Stream)
+*   **Remote Touch Control**: การสั่งงานผ่าน Accessibility Service
+*   **Network Discovery**: ระบบค้นหาอุปกรณ์อัตโนมัติผ่าน UDP
+
+---
+
+## 🔌 WebSocket System Channel (MVP)
+
+WebSocket is designed as a **system communication bus**, used for:
+- Service heartbeat & keep-alive signals
+- App / system state reporting (Telemetry)
+- Command → execution → result flow
+- Background-safe communication even when UI is not active
+
+ระบบใช้ WebSocket เพื่อการสื่อสารระดับ **System Bus** โดยมี Format ข้อมูลแบบ JSON Standard.
+
+### 1. Log / Event Structure
+```json
+{
+  "timestamp": "2024-02-12T20:30:00Z",
+  "level": "INFO", 
+  "component": "RelayService",
+  "event": "heartbeat",
+  "data": { "uptime_sec": 1204, "is_background": true }
+}
+```
+
+### 2. Supported Message Types
+*   **Heartbeat**: ยืนยันสถานะ Service (`uptime`, `memory`, `service_state`)
+*   **Command**: คำสั่งจากภายนอก (`click`, `swipe`, `stop_service`)
+*   **Telemetry**: รายงานสถานะเครือข่าย
+
+---
+
+## 📐 System Architecture Diagram
+
+```
+[Client / Control Panel]
+           |
+ (WebSocket System Bus)
+           |
+           v
++--------------------------+
+|  Android Relay Service   |
++--------------------------+
+|                          |
+|  [ WebSocket Manager ] <-----> (Cmd / Heartbeat / Logs)
+|           |              |
+|           +--------------+----> [ Core Logic ] (Auto-Restart)
+|           |              |           |
+|  [ Screen Capture ]      |      [ Log Repository ]
+|           |              |           |
+|  [ Accessibility ]       |      [ Export Module ] (JSON)
+|                          |
++--------------------------+
+           |
+    (Hardware / SDK)
+     [ Dipchip Adapter ] ... (Future Integration)
+```
+
+---
+
+## 📱 Features & How to Use (การใช้งาน)
+
+### 1. Permission Setup
+1.  **Allow Background Running**: ปิด Battery Optimization (สำคัญสำหรับ `Auto-restart`)
+2.  **Floating Windows**: แสดงสถานะ Overlay
+3.  **Notification**: แสดงสถานะ Notification Bar (Android 13+)
+4.  **Accessibility**: ควบคุมหน้าจอระยะไกล
+
+### 2. System Log View
+*   เข้าเมนู **System View** เพื่อดู Log การทำงานแบบ Real-time (JSON Components)
+*   **Export Data**: ส่งออกเป็นไฟล์ `.json`
+
+---
+
+## 🔧 Engineering Notes / Log
+
+### 1. ความเสถียรของ Service (`START_STICKY`)
+- **Optimization**: ปรับใช้ `START_STICKY` ใน Service และแยก Threading ออกจาก Main UI
+- **Result**: Improves long-running reliability for on-call / unattended use cases. (แอปทำงานได้ยาวนาน ลดภาระการดูแลหน้างาน)
+
+### 2. ประสิทธิภาพการส่งข้อมูล (Binary Stream)
+- **Optimization**: เปลี่ยนการส่งข้อมูลภาพเป็น Raw Binary Streams แทน Base64
+- **Result**: Reduces bandwidth usage and CPU load, enabling scalable deployment on low-end hardware. (ประหยัดทรัพยากรเครื่อง)
+
+### 3. Structured Logging & Export
+- **Impl**: ระบบ Log แบบ JSON objects แทน Plain text
+- **Result**: Enables automated system diagnostics and easier fault isolation. (ช่วยให้การตรวจสอบปัญหาง่ายขึ้นมาก)
+
+---
+*Project Status: System-Level MVP Complete (Ready for integration)*
