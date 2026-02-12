@@ -13,8 +13,12 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
@@ -23,6 +27,7 @@ import androidx.compose.ui.unit.sp
 fun LogViewerScreen(onBack: () -> Unit) {
     val logs = LogRepository.logs
     val listState = rememberLazyListState()
+    val context = androidx.compose.ui.platform.LocalContext.current
     
     // Auto-scroll to bottom when logs change
     LaunchedEffect(logs.size) {
@@ -34,7 +39,12 @@ fun LogViewerScreen(onBack: () -> Unit) {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Server Logs", fontWeight = FontWeight.Bold) },
+                title = { 
+                    Column {
+                        Text("System View", fontWeight = FontWeight.SemiBold, fontSize = 20.sp)
+                        Text("${logs.size} Events Captured", fontSize = 12.sp, color = Color.Gray)
+                    }
+                },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.Filled.ArrowBack, "Back")
@@ -42,12 +52,28 @@ fun LogViewerScreen(onBack: () -> Unit) {
                 },
                 actions = {
                     IconButton(onClick = { LogRepository.clearLogs() }) {
-                        Icon(Icons.Filled.Delete, "Clear", tint = Color.Red)
+                        Icon(Icons.Filled.Delete, "Clear", tint = Color.Gray)
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = Color.White
                 )
+            )
+        },
+        floatingActionButton = {
+            ExtendedFloatingActionButton(
+                onClick = {
+                    val path = LogRepository.exportLogsToDownloads(context)
+                    if (path != null) {
+                        android.widget.Toast.makeText(context, "Saved: $path", android.widget.Toast.LENGTH_LONG).show()
+                    } else {
+                        android.widget.Toast.makeText(context, "Export Failed", android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                },
+                containerColor = Color(0xFF2196F3),
+                contentColor = Color.White,
+                icon = { Icon(Icons.Filled.Download, null) },
+                text = { Text("Export JSON") }
             )
         }
     ) { padding ->
@@ -55,37 +81,18 @@ fun LogViewerScreen(onBack: () -> Unit) {
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .background(Color(0xFFF5F7FA)) // Light theme for readability
+                .background(Color(0xFFF5F5F7))
         ) {
             if (logs.isEmpty()) {
-                Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Icon(
-                            Icons.Filled.Description, 
-                            null, 
-                            tint = Color.LightGray, 
-                            modifier = Modifier.size(64.dp)
-                        )
-                        Spacer(modifier = Modifier.height(16.dp))
-                        Text("No logs available yet", color = Color.Gray)
-                        Text(
-                            "Start broadcasting to see activity", 
-                            color = Color.LightGray,
-                            fontSize = 12.sp
-                        )
-                    }
-                }
+                EmptyState()
             } else {
                 LazyColumn(
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(horizontal = 16.dp),
+                        .padding(horizontal = 14.dp),
                     state = listState,
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                    contentPadding = PaddingValues(vertical = 16.dp)
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                    contentPadding = PaddingValues(top = 16.dp, bottom = 80.dp) // Space for FAB
                 ) {
                     items(logs) { log ->
                         LogCard(log)
@@ -97,49 +104,127 @@ fun LogViewerScreen(onBack: () -> Unit) {
 }
 
 @Composable
-fun LogCard(log: LogRepository.LogEntry) {
-    val (icon, color, bg) = when (log.type) {
-        LogRepository.LogType.INFO -> Triple(Icons.Filled.Info, Color(0xFF2196F3), Color(0xFFE3F2FD))
-        LogRepository.LogType.ERROR -> Triple(Icons.Filled.Error, Color(0xFFF44336), Color(0xFFFFEBEE))
-        LogRepository.LogType.OUTGOING -> Triple(Icons.Filled.ArrowUpward, Color(0xFF4CAF50), Color(0xFFE8F5E9))
-        LogRepository.LogType.INCOMING -> Triple(Icons.Filled.ArrowDownward, Color(0xFFFF9800), Color(0xFFFFF3E0))
+fun EmptyState() {
+    Box(
+        modifier = Modifier.fillMaxSize(),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Icon(
+                Icons.Filled.Info, 
+                null, 
+                tint = Color.LightGray, 
+                modifier = Modifier.size(72.dp)
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+            Text("No System Events", color = Color.Gray, fontWeight = FontWeight.Medium)
+            Text(
+                "Waiting for activity...", 
+                color = Color.LightGray,
+                fontSize = 14.sp
+            )
+        }
     }
+}
 
+@Composable
+fun LogCard(log: LogRepository.LogEntry) {
     Card(
         colors = CardDefaults.cardColors(containerColor = Color.White),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
-        shape = RoundedCornerShape(8.dp)
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+        shape = RoundedCornerShape(12.dp)
     ) {
-        Row(
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(12.dp),
-            verticalAlignment = Alignment.Top
+                .padding(14.dp)
         ) {
-            Box(
-                modifier = Modifier
-                    .size(32.dp)
-                    .background(bg, shape = RoundedCornerShape(8.dp)),
-                contentAlignment = Alignment.Center
+            // Header: Component + Time
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth()
             ) {
-                 Icon(icon, null, tint = color, modifier = Modifier.size(16.dp))
-            }
-            Spacer(modifier = Modifier.width(12.dp))
-            Column {
+                // Left side (Component + Event) - Flexible width
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    StatusIndicator(log.type)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = buildAnnotatedString {
+                            withStyle(style = SpanStyle(fontWeight = FontWeight.Bold, color = Color(0xFF333333))) {
+                                append(log.component)
+                            }
+                            withStyle(style = SpanStyle(color = Color(0xFF666666))) {
+                                append(" • ${log.event}")
+                            }
+                        },
+                        fontSize = 14.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+
+                // Spacing
+                Spacer(modifier = Modifier.width(8.dp))
+
+                // Right side (Timestamp) - Fixed non-wrapping
                 Text(
                     text = LogRepository.getFormattedTimestamp(log.timestamp),
+                    fontSize = 12.sp,
                     color = Color.Gray,
-                    fontSize = 10.sp,
-                    fontFamily = FontFamily.Monospace
-                )
-                Text(
-                    text = log.message,
-                    color = Color(0xFF333333),
-                    fontSize = 13.sp,
                     fontFamily = FontFamily.Monospace,
-                    maxLines = 10
+                    maxLines = 1,
+                    softWrap = false
                 )
+            }
+            
+            // Data Payload
+            if (log.data.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(10.dp))
+                Surface(
+                    color = Color(0xFFFAFAFA),
+                    shape = RoundedCornerShape(6.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(10.dp)) {
+                        log.data.forEach { (key, value) ->
+                            Row(modifier = Modifier.padding(vertical = 2.dp)) {
+                                Text(
+                                    text = "$key: ",
+                                    color = Color.Gray,
+                                    fontSize = 12.sp,
+                                    fontFamily = FontFamily.Monospace,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Text(
+                                    text = value.toString(),
+                                    color = Color(0xFF2C2C2C),
+                                    fontSize = 12.sp,
+                                    fontFamily = FontFamily.Monospace
+                                )
+                            }
+                        }
+                    }
+                }
             }
         }
     }
+}
+
+@Composable
+fun StatusIndicator(type: LogRepository.LogType) {
+    val color = when (type) {
+        LogRepository.LogType.INFO -> Color(0xFF2196F3) // Blue
+        LogRepository.LogType.ERROR -> Color(0xFFE91E63) // Pink/Red
+        LogRepository.LogType.OUTGOING -> Color(0xFF4CAF50) // Green
+        LogRepository.LogType.INCOMING -> Color(0xFFFF9800) // Orange
+    }
+    
+    Box(
+        modifier = Modifier
+            .size(8.dp)
+            .background(color, shape = androidx.compose.foundation.shape.CircleShape)
+    )
 }

@@ -128,17 +128,30 @@ class RelayService : Service() {
             while (isActive) {
                 delay(1000)
                 try {
+                    val statusMap = mapOf<String, Any>(
+                        "uptime_sec" to (System.currentTimeMillis() - 0L) / 1000, // Ideally track start time
+                        "foreground_service" to true,
+                        "screen_capture_active" to (screenCaptureManager != null), // Assuming generic check
+                        "is_background" to true
+                    )
+                    
                     val statusJson = org.json.JSONObject()
                     statusJson.put("type", "heartbeat")
-                    statusJson.put("timestamp", System.currentTimeMillis())
-                    statusJson.put("alive", true)
-                    statusJson.put("is_background", true) // Indicator for testing
+                    statusJson.put("data", org.json.JSONObject(statusMap)) // Nest inside data for consistency? Or flatten?
+                    // Flat structure for existing clients but consistent with new logs internally
+                    statusMap.forEach { (k, v) -> statusJson.put(k, v) }
+                    
                     relayServer?.broadcastToAuthenticated(statusJson.toString())
                     
                     // Log heartbeat less frequently to avoid spam (every 5s)
                     counter++
                     if (counter % 5 == 0) {
-                        LogRepository.addLog("Heartbeat sent (Background: True) [x5]", LogRepository.LogType.OUTGOING)
+                        LogRepository.addLog(
+                            component = "RelayService",
+                            event = "heartbeat",
+                            data = statusMap,
+                            type = LogRepository.LogType.OUTGOING
+                        )
                     }
                 } catch (e: Exception) {
                     e.printStackTrace()

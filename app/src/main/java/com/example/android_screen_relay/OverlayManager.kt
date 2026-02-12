@@ -17,6 +17,18 @@ class OverlayManager(private val context: Context) {
     fun showOverlay() {
         if (overlayView != null) return
 
+        // User requested NOT to show the overlay on screen ("displaying on the screen")
+        // but rely on notification ("show that it is doing on air").
+        // Since the Service has a notification, we can disable the floating window here.
+        // If we strictly follow "show that it is doing on air" but NOT on screen, 
+        // effectively we don't add the view.
+        
+        // However, if the intent was just to not block the UI, maybe we could make it tiny.
+        // But "I don't want it to show on the screen" is strong.
+        // We will return early. The Notification handles the "On Air" status.
+        return
+
+        /* Legacy Overlay
         // Creating a pill-shaped indicator
         val backgroundDrawable = GradientDrawable().apply {
             shape = GradientDrawable.RECTANGLE
@@ -24,37 +36,8 @@ class OverlayManager(private val context: Context) {
             setColor(Color.parseColor("#CCFF3B30")) // Semi-transparent Red
             setStroke(2, Color.WHITE)
         }
-
-        val textView = TextView(context).apply {
-            text = "● On Air"
-            textSize = 14f
-            background = backgroundDrawable
-            setTextColor(Color.WHITE)
-            setPadding(32, 16, 32, 16)
-            elevation = 10f
-        }
-        overlayView = textView
-
-        val params = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
-                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-            else
-                WindowManager.LayoutParams.TYPE_PHONE,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or 
-            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
-            PixelFormat.TRANSLUCENT
-        )
-
-        params.gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
-        params.y = 100 // Margin from top
-
-        try {
-            windowManager.addView(overlayView, params)
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
+        ...
+        */
     }
 
     fun removeOverlay() {

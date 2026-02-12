@@ -1,15 +1,25 @@
 package com.example.android_screen_relay
 
+import android.content.Context
+import android.os.Environment
 import androidx.compose.runtime.mutableStateListOf
+import org.json.JSONObject
+import java.io.File
+import java.io.FileWriter
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.TimeZone
 
 object LogRepository {
+    // New Structured Log Entry
     data class LogEntry(
         val timestamp: Long,
-        val message: String,
-        val type: LogType
+        val level: String,     // INFO, WARN, ERROR
+        val component: String, // WebSocketServer, RelayService, etc.
+        val event: String,     // heartbeat, client_connected, etc.
+        val data: Map<String, Any>, // Flexible data payload
+        val type: LogType // Keeping UI type distinct for color coding
     )
 
     enum class LogType {
@@ -19,22 +29,87 @@ object LogRepository {
     private val _logs = mutableStateListOf<LogEntry>()
     val logs: List<LogEntry> get() = _logs
 
-    private val dateFormat = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
+    // ISO 8601 Format for JSON logs
+    private val isoDateFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).apply {
+        timeZone = TimeZone.getTimeZone("UTC")
+    }
+    
+    // UI Display Format
+    private val uiDateFormat = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
 
-    fun addLog(message: String, type: LogType = LogType.INFO) {
+    fun addLog(
+        component: String,
+        event: String,
+        data: Map<String, Any> = emptyMap(),
+        level: String = "INFO",
+        type: LogType = LogType.INFO
+    ) {
         synchronized(_logs) {
             if (_logs.size > 1000) {
                 _logs.removeAt(0)
             }
-            _logs.add(LogEntry(System.currentTimeMillis(), message, type))
+            _logs.add(
+                LogEntry(
+                    timestamp = System.currentTimeMillis(),
+                    level = level,
+                    component = component,
+                    event = event,
+                    data = data,
+                    type = type
+                )
+            )
         }
     }
     
+    // Legacy support wrapper (optional, helps migrate existing calls)
+    fun addLegacyLog(message: String, type: LogType = LogType.INFO) {
+        addLog(
+            component = "Legacy",
+            event = "message",
+            data = mapOf("msg" to message),
+            level = if (type == LogType.ERROR) "ERROR" else "INFO",
+            type = type
+        )
+    }
+
     fun clearLogs() {
         _logs.clear()
     }
 
     fun getFormattedTimestamp(timestamp: Long): String {
-        return dateFormat.format(Date(timestamp))
+        return uiDateFormat.format(Date(timestamp))
+    }
+
+    // Export to JSON file in Downloads
+    fun exportLogsToDownloads(context: Context): String? {
+        return try {
+            val timestamp = SimpleDateFormat("yyyy-MM-dd_HH-mm-ss", Locale.US).format(Date())
+            val fileName = "relay_logs_$timestamp.json"
+            val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+            val file = File(downloadsDir, fileName)
+
+            FileWriter(file).use { writer ->
+                val jsonArray = org.json.JSONArray()
+                
+                synchronized(_logs) {
+                    _logs.forEach { log ->
+                        val json = JSONObject()
+                        json.put("timestamp", isoDateFormat.format(Date(log.timestamp)))
+                        json.put("level", log.level)
+                        json.put("component", log.component)
+                        json.put("event", log.event)
+                        json.put("data", JSONObject(log.data))
+                        jsonArray.put(json)
+                    }
+                }
+                
+                // Write formatted JSON with indentation level 2
+                writer.write(jsonArray.toString(2))
+            }
+            file.absolutePath
+        } catch (e: Exception) {
+            e.printStackTrace()
+            null
+        }
     }
 }

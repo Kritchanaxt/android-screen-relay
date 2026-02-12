@@ -1,10 +1,14 @@
 package com.example.android_screen_relay
 
+import android.Manifest
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -14,6 +18,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.WebAsset
@@ -28,6 +33,7 @@ import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 
@@ -37,6 +43,24 @@ fun PermissionSettingsScreen(onBack: () -> Unit) {
     val context = LocalContext.current
     var isOverlayEnabled by remember { mutableStateOf(Settings.canDrawOverlays(context)) }
     var isBatteryOptimized by remember { mutableStateOf(checkBatteryOptimization(context)) }
+    
+    // Check Notification Permission (Android 13+)
+    var isNotificationGranted by remember { 
+        mutableStateOf(
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+            } else {
+                true
+            }
+        ) 
+    }
+
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission(),
+        onResult = { isGranted ->
+            isNotificationGranted = isGranted
+        }
+    )
 
     // Resume check to update toggles when returning from settings
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -45,6 +69,9 @@ fun PermissionSettingsScreen(onBack: () -> Unit) {
             if (event == Lifecycle.Event.ON_RESUME) {
                 isOverlayEnabled = Settings.canDrawOverlays(context)
                 isBatteryOptimized = checkBatteryOptimization(context)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    isNotificationGranted = ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+                }
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -89,7 +116,6 @@ fun PermissionSettingsScreen(onBack: () -> Unit) {
                 isGranted = isOverlayEnabled,
                 buttonText = "to Settings",
                 onClick = {
-                    // Always allow user to click Manage/to Settings
                     val intent = Intent(
                         Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
                         Uri.parse("package:${context.packageName}")
@@ -98,6 +124,28 @@ fun PermissionSettingsScreen(onBack: () -> Unit) {
                     context.startActivity(intent)
                 }
             )
+            
+            // Card 1.5: Notifications (Android 13+)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                PermissionDetailCard(
+                    title = "Allow Notifications",
+                    description = "Required to show 'On Air' status in notification bar.",
+                    icon = Icons.Filled.Notifications,
+                    isGranted = isNotificationGranted,
+                    buttonText = if (isNotificationGranted) "Enabled" else "Allow",
+                    onClick = {
+                        if (!isNotificationGranted) {
+                            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                        } else {
+                            // Open App Notification Settings
+                             val intent = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                             intent.putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+                             intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                             context.startActivity(intent)
+                        }
+                    }
+                )
+            }
 
             // Card 2: Allow background running
             PermissionDetailCard(

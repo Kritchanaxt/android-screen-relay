@@ -16,7 +16,13 @@ class RelayServer(port: Int) : WebSocketServer(InetSocketAddress(port)) {
 
     fun updatePasskey(passkey: String?) {
         this.currentPasskey = passkey
-        LogRepository.addLog("Passkey updated: $passkey", LogRepository.LogType.INFO)
+        LogRepository.addLog(
+            component = "RelayServer",
+            event = "security",
+            data = mapOf("action" to "passkey_update", "passkey" to (passkey ?: "null")),
+            level = "INFO",
+            type = LogRepository.LogType.INFO
+        )
         if (passkey == null) {
             // If passkey is cleared/reset, disconnect everyone or just invalidate?
             // Disconnecting is safer
@@ -29,16 +35,26 @@ class RelayServer(port: Int) : WebSocketServer(InetSocketAddress(port)) {
         val remoteAddr = conn.remoteSocketAddress?.address?.hostAddress ?: "Unknown"
         val descriptor = handshake.resourceDescriptor
         
-        val msg = "NEW CONNECTION: IP=$remoteAddr | Resource=$descriptor"
-        Log.d("RelayServer", msg)
-        LogRepository.addLog(msg, LogRepository.LogType.INFO)
+        Log.d("RelayServer", "NEW CONNECTION: IP=$remoteAddr | Resource=$descriptor")
+        LogRepository.addLog(
+            component = "RelayServer",
+            event = "client_connected",
+            data = mapOf("ip" to remoteAddr, "resource" to descriptor),
+            level = "INFO",
+            type = LogRepository.LogType.INFO
+        )
         
         // Enforce timeout for auth
         kotlinx.coroutines.GlobalScope.launch {
             kotlinx.coroutines.delay(5000)
             if (conn.isOpen && !authenticatedSessions.contains(conn)) {
-                val timeoutMsg = "Auth Timeout: Disconnecting $remoteAddr"
-                LogRepository.addLog(timeoutMsg, LogRepository.LogType.ERROR)
+                LogRepository.addLog(
+                    component = "RelayServer",
+                    event = "auth_timeout",
+                    data = mapOf("ip" to remoteAddr),
+                    level = "WARN",
+                    type = LogRepository.LogType.ERROR
+                )
                 conn.close(1008, "Authentication timeout")
             }
         }
@@ -47,10 +63,15 @@ class RelayServer(port: Int) : WebSocketServer(InetSocketAddress(port)) {
     override fun onClose(conn: WebSocket, code: Int, reason: String, remote: Boolean) {
         val remoteAddr = conn.remoteSocketAddress?.address?.hostAddress ?: "Unknown"
         val who = if (remote) "Remote" else "Local"
-        val msg = "DISCONNECTED: $remoteAddr | Code=$code | Reason=$reason | By=$who"
         
-        Log.d("RelayServer", msg)
-        LogRepository.addLog(msg, LogRepository.LogType.INFO)
+        Log.d("RelayServer", "DISCONNECTED: $remoteAddr | Code=$code | Reason=$reason | By=$who")
+        LogRepository.addLog(
+            component = "RelayServer",
+            event = "client_disconnected",
+            data = mapOf("ip" to remoteAddr, "code" to code, "reason" to reason, "initiator" to who),
+            level = "INFO",
+            type = LogRepository.LogType.INFO
+        )
         authenticatedSessions.remove(conn)
     }
 
@@ -64,7 +85,12 @@ class RelayServer(port: Int) : WebSocketServer(InetSocketAddress(port)) {
                 val attemptKey = json.optString("key")
                 val remoteAddr = conn.remoteSocketAddress?.address?.hostAddress ?: "?"
                 
-                LogRepository.addLog("AUTH REQUEST: From $remoteAddr with key '******'", LogRepository.LogType.INCOMING)
+                LogRepository.addLog(
+                    component = "RelayServer",
+                    event = "auth_request",
+                    data = mapOf("ip" to remoteAddr),
+                    type = LogRepository.LogType.INCOMING
+                )
                 
                 if (currentPasskey != null && attemptKey == currentPasskey) {
                     authenticatedSessions.add(conn)
@@ -73,9 +99,14 @@ class RelayServer(port: Int) : WebSocketServer(InetSocketAddress(port)) {
                     response.put("status", "ok")
                     conn.send(response.toString())
                     
-                    val msg = "AUTH SUCCESS: Client $remoteAddr is now authenticated."
-                    Log.d("RelayServer", msg)
-                    LogRepository.addLog(msg, LogRepository.LogType.INFO)
+                    Log.d("RelayServer", "AUTH SUCCESS: Client $remoteAddr is now authenticated.")
+                    LogRepository.addLog(
+                        component = "RelayServer",
+                        event = "auth_success",
+                        data = mapOf("ip" to remoteAddr),
+                        level = "INFO",
+                        type = LogRepository.LogType.INFO
+                    )
                 } else {
                     val response = org.json.JSONObject()
                     response.put("type", "auth_response")
@@ -83,9 +114,14 @@ class RelayServer(port: Int) : WebSocketServer(InetSocketAddress(port)) {
                     conn.send(response.toString())
                     conn.close(1008, "Invalid Passkey") // Specific close code
                     
-                    val failMsg = "AUTH FAILED: Invalid passkey from $remoteAddr"
-                    Log.w("RelayServer", failMsg)
-                    LogRepository.addLog(failMsg, LogRepository.LogType.ERROR)
+                    Log.w("RelayServer", "AUTH FAILED: Invalid passkey from $remoteAddr")
+                    LogRepository.addLog(
+                        component = "RelayServer",
+                        event = "auth_failed",
+                        data = mapOf("ip" to remoteAddr),
+                        level = "WARN",
+                        type = LogRepository.LogType.ERROR
+                    )
                 }
                 return
             }
@@ -96,18 +132,22 @@ class RelayServer(port: Int) : WebSocketServer(InetSocketAddress(port)) {
             }
             
             // Log command details
-            val detail = when (type) {
-                "click" -> {
-                    if (json.has("x_percent")) "Click(${json.optDouble("x_percent")}, ${json.optDouble("y_percent")})"
-                    else "Click(${json.optDouble("x")}, ${json.optDouble("y")})"
+            val commandData = mutableMapOf<String, Any>("action" to type)
+            // Extract some details for the log
+            val iter = json.keys()
+            while(iter.hasNext()) {
+                val key = iter.next()
+                if (key != "type" && key != "key") {
+                     commandData[key] = json.opt(key) 
                 }
-                "swipe" -> "Swipe(${json.optInt("duration")}ms)"
-                "back" -> "Action: BACK"
-                "home" -> "Action: HOME"
-                "recent" -> "Action: RECENT"
-                else -> "Data: $message"
             }
-            LogRepository.addLog("CMD RX: $detail", LogRepository.LogType.INCOMING)
+            
+            LogRepository.addLog(
+                component = "RelayServer",
+                event = "command_received",
+                data = commandData,
+                type = LogRepository.LogType.INCOMING
+            )
             
             // ... (Rest of logic remains same, just logging above)
             
@@ -156,14 +196,26 @@ class RelayServer(port: Int) : WebSocketServer(InetSocketAddress(port)) {
 
     override fun onError(conn: WebSocket?, ex: Exception) {
         Log.e("RelayServer", "Error: ${ex.message}")
-        LogRepository.addLog("Error: ${ex.message}", LogRepository.LogType.ERROR)
+        LogRepository.addLog(
+            component = "RelayServer",
+            event = "error",
+            data = mapOf("message" to (ex.message ?: "Unknown error")),
+            level = "ERROR",
+            type = LogRepository.LogType.ERROR
+        )
         ex.printStackTrace()
     }
 
     override fun onStart() {
         val msg = "Server started on port $port"
         Log.d("RelayServer", msg)
-        LogRepository.addLog(msg, LogRepository.LogType.INFO)
+        LogRepository.addLog(
+            component = "RelayServer",
+            event = "server_start",
+            data = mapOf("port" to port),
+            level = "INFO",
+            type = LogRepository.LogType.INFO
+        )
     }
     
     fun broadcastImage(imageBytes: ByteArray) {
@@ -183,9 +235,14 @@ class RelayServer(port: Int) : WebSocketServer(InetSocketAddress(port)) {
         }
         // Don't log heartbeat content fully if it is heartbeat
         if (message.contains("heartbeat")) {
-             // LogRepository.addLog("TX: Heartbeat", LogRepository.LogType.OUTGOING)
+             // LogRepository.addLog(component="RelayServer", event="heartbeat_sent", ...)
         } else {
-             LogRepository.addLog("TX: $message", LogRepository.LogType.OUTGOING)
+             LogRepository.addLog(
+                 component = "RelayServer",
+                 event = "broadcast_message", // Renamed from TX generic
+                 data = mapOf("message" to message),
+                 type = LogRepository.LogType.OUTGOING
+             )
         }
     }
 

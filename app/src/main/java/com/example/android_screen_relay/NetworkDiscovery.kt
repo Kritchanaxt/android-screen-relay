@@ -50,7 +50,12 @@ object NetworkDiscovery {
                             val requestedPasskey = message.substringAfter(PREFIX_DISCOVER)
                             val remoteIp = packet.address.hostAddress
                             
-                            LogRepository.addLog("DISCOVERY: Packet from $remoteIp asking for $requestedPasskey", LogRepository.LogType.INCOMING)
+                            LogRepository.addLog(
+                                component = "NetworkDiscovery",
+                                event = "discovery_request",
+                                data = mapOf("ip" to (remoteIp ?: "unknown"), "requested_key" to requestedPasskey),
+                                type = LogRepository.LogType.INCOMING
+                            )
                             
                             if (requestedPasskey == passkey) {
                                 // Match! Send our IP details back to the sender
@@ -63,7 +68,12 @@ object NetworkDiscovery {
                                 val responsePayload = "$PREFIX_OFFER$myIp:$port"
                                 val responseBytes = responsePayload.toByteArray()
                                 
-                                LogRepository.addLog("DISCOVERY: Match! Sending OFFER to $remoteIp", LogRepository.LogType.OUTGOING)
+                                LogRepository.addLog(
+                                    component = "NetworkDiscovery",
+                                    event = "discovery_match",
+                                    data = mapOf("target_ip" to (remoteIp ?: "unknown")),
+                                    type = LogRepository.LogType.OUTGOING
+                                )
                                 
                                 val replyPacket = DatagramPacket(
                                     responseBytes,
@@ -74,7 +84,13 @@ object NetworkDiscovery {
                                 socket?.send(replyPacket)
                                 android.util.Log.d("NetworkDiscovery", "Replied to discovery from ${packet.address}")
                             } else {
-                                LogRepository.addLog("DISCOVERY: Ignored (Passkey mismatch)", LogRepository.LogType.INFO)
+                                LogRepository.addLog(
+                                    component = "NetworkDiscovery",
+                                    event = "discovery_ignored",
+                                    data = mapOf("reason" to "passkey_mismatch", "ip" to (remoteIp ?: "unknown")),
+                                    level = "INFO",
+                                    type = LogRepository.LogType.INFO
+                                )
                             }
                         }
                     } catch (e: java.net.SocketTimeoutException) {
