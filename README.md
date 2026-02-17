@@ -89,6 +89,36 @@ WebSocket is designed as a **system communication bus**, used for:
      [ Dipchip Adapter ] ... (Future Integration)
 ```
 
+## 🔌 WebSocket Communication Flow
+
+แผนภาพการทำงานเมื่อ Viewer เชื่อมต่อกับ Host:
+
+```mermaid
+sequenceDiagram
+    participant UI as Viewer Screen (UI)
+    participant Client as WebSocket Manager (Client)
+    participant Server as Relay Server (Host)
+
+    Note over UI, Server: Connection Phase
+    UI->>Client: 1. Init Connection (ws://ip:port)
+    Client->>Server: 2. Handshake Request
+    Server-->>Client: 3. Connection Accepted (Open)
+    Client->>Server: 4. Send Auth ({"type": "auth", "key": "..."})
+    Server-->>Client: 5. Auth Response ({"status": "ok"})
+    Client->>UI: 6. Update Status: "Connected"
+
+    Note over UI, Server: Data Transmission Phase
+    loop Real-time Stream
+        Server->>Client: Binary Frame (Screen JPEG)
+        Client->>UI: Update Bitmap (Render Image)
+    end
+
+    Note over UI, Server: Control Phase
+    UI->>Client: User Tap/Swipe
+    Client->>Server: Send Command ({"type": "touch", "x": 100, "y": 200})
+    Server->>Server: Inject Event (Accessibility)
+```
+
 ---
 
 ## 📱 Features & How to Use (การใช้งาน)
@@ -121,3 +151,4 @@ WebSocket is designed as a **system communication bus**, used for:
 
 ---
 *Project Status: System-Level MVP Complete (Ready for integration)*
+
