@@ -1,154 +1,161 @@
-# Android Screen Relay
-### System-level Android Relay Service for Background Control & Device Integration
-*(Designed for industrial / system use cases - hardware integration ready)*
+# Android Screen Relay (WebSocket Control & Stream)
 
----
+โปรเจคระบบส่งภาพหน้าจอและควบคุมเครื่อง Android ระยะไกลผ่าน WebSocket โดยเน้นการทำงานแบบ Background Service และ Overlay Process รองรับการเชื่อมต่อกับ Web Browser เพื่อรับ-ส่งข้อมูล JSON และคำสั่งควบคุมต่างๆ เหมาะสำหรับการนำไปประยุกต์ใช้กับตู้ Kiosk, ระบบ IoT Controller หรือการทำ Remote Support
 
-Android Screen Relay คือรากฐานระบบ **System-level Android Application** ที่ถูกออกแบบมาเพื่อการทำงานเบื้องหลัง (Background Execution) อย่างเสถียร โดยทำหน้าที่เป็น "ตัวกลาง" (Relay) ในการเชื่อมต่อ สั่งการ และตรวจสอบสถานะของอุปกรณ์ Android ผ่านระบบเครือข่าย
+## 🌟 ฟีเจอร์หลัก (Features)
 
-โปรเจกต์นี้**ไม่ใช่แค่แอป Screen Mirroring ทั่วไป** แต่เป็นโครงสร้างพื้นฐาน (Infrastructure) สำหรับงานระบบที่ต้องการ reliability สูง เช่น ตู้ Kiosk, IoT Controllers, หรือ Industrial Displays
+*   **WebSocket Communication:**
+    *   **Server Mode:** เปิด WebSocket Server ภายในแอพเพื่อให้ Client (เช่น Web Browser) เชื่อมต่อเข้ามาได้โดยตรง
+    *   **Data Exchange:** รองรับการส่งข้อมูล JSON ไปมาระหว่าง App และ Web แบบ Real-time
+    *   **Remote Control:** รับคำสั่งจาก Web (เช่น Click, Swipe) และสั่งงานมือถือผ่าน Accessibility Service
+*   **Background Operation:**
+    *   ทำงานต่อเนื่องแม้ปิดหน้าจอแอพ หรือล็อคหน้าจอ (Foreground Service)
+    *   **Auto-Start:** เริ่มทำงานอัตโนมัติเมื่อเปิดเครื่อง (Boot Receiver)
+*   **Screen Capture (MediaProjection):**
+    *   รองรับการเข้าถึง MediaProjection API เพื่อจับภาพหน้าจอ (เตรียมพร้อมสำหรับฟีเจอร์ Streaming)
+*   **Overlay / Floating Window:**
+    *   แสดงสถานะการทำงานและปุ่มควบคุมลอยอยู่บนหน้าจออื่นได้ (System Alert Window)
+*   **Log System:**
+    *   ระบบบันทึก Log ภายในแอพเพื่อตรวจสอบการทำงานและข้อผิดพลาด (LogRepository)
 
-## 🎯 System-Level Design Goals (เป้าหมายการออกแบบ)
+## 🛠️ วิธีการติดตั้งและใช้งาน (Usage)
 
-โปรเจกต์นี้ถูกออกแบบโดยเน้นหลักการสำคัญ:
+1.  **ติดตั้งแอพพลิเคชัน (Install):**
+    *   ติดตั้งไฟล์ APK ลงในเครื่อง Android (รองรับ Android 7.0+)
+2.  **ตั้งค่าสิทธิ์ (Permissions Setup):** ⚠️ *สำคัญมาก* ต้องเปิดสิทธิ์เหล่านี้เพื่อให้แอพทำงานสมบูรณ์:
+    *   **Display over other apps (Floating Window):** อนุญาตให้แอพแสดงทับแอพอื่นได้ (สำหรับ Overlay)
+    *   **Accessibility Service:** เข้าไปที่ Settings > Accessibility > Android Screen Relay > เปิดใช้งาน (เพื่อให้แอพสั่ง Click/Swipe ได้)
+    *   **Screen Recording / Casting:** กด "Start Now" เมื่อแอพขอสิทธิ์บันทึกหน้าจอ
+    *   **Battery Optimization:** เข้าไปที่ App Info > Battery > เลือก Unrestricted (เพื่อให้รัน Background ได้ยาวนาน)
+3.  **เริ่มใช้งาน:**
+    *   เปิดแอพ กดปุ่ม **"Start Service"**
+    *   นำ **IP Address** และ **Port** ที่แสดงในแอพ (เช่น `ws://192.168.1.45:8080`) ไปใส่ใน Web Client
+    *   ทดสอบส่งข้อความ JSON จาก Web เข้ามายัง App
 
-1.  **Persistent Background Execution**: ระบบต้องทำงานได้ตลอดเวลา (24/7) ผ่าน Foreground Service แม้จะปิดหน้าจอหรือสลับแอป
-2.  **Auto-Restart & Recovery**: กลยุทธ์การกู้คืนระบบอัตโนมัติเมื่อ Service ถูก Kill (ใช้ `START_STICKY` + Recovery-ready design) เพื่อให้ระบบกลับมาทำงานเองได้ (Unattended Use)
-3.  **System Communication Bus**: ใช้ WebSocket เป็นท่อส่งข้อมูลหลักสำหรับการควบคุมไม่ใช่แค่ Streaming
-4.  **Non-Intrusive Status**: การแจ้งเตือนสถานะต้องไม่รบกวนหน้าจอหลัก (Overlay/Notification)
-5.  **Hardware Integration Ready**: โครงสร้าง Code เตรียมพร้อมสำหรับเชื่อมต่อกับ module ภายนอก
+## 🧪 วิธีการทดสอบ (Testing)
 
----
+**การทดสอบระบบ WebSocket (เบื้องต้น):**
+1.  **Network Setup:** เชื่อมต่อมือถือและคอมพิวเตอร์ให้อยู่ในวง LAN เดียวกัน (Wi-Fi เดียวกัน)
+2.  **Start Server:** เปิดแอพและ Start Service สังเกต IP Port ที่แสดง
+3.  **WebSocket Client:** ใช้เครื่องมือทดสอบ เช่น Postman, PieSocket หรือเขียน HTML ง่ายๆ
+4.  **Connect:** เชื่อมต่อมายัง URL ของมือถือ `ws://<DEVICE_IP>:<PORT>`
+5.  **Test Send (App -> Web):**
+    *   ดู Log บน Web Client ว่าได้รับข้อความ "Connected" หรือข้อมูล JSON หรือไม่
+6.  **Test Receive (Web -> App):**
+    *   ลองส่ง JSON command จาก Web ไปยัง App:
+        ```json
+        {
+            "type": "alert",
+            "message": "Hello Android from Web!"
+        }
+        ```
+    *   ตรวจสอบที่มือถือว่ามี **Notification** หรือ **Toast** แจ้งเตือนขึ้นหรือไม่ (แม้ขณะยุบแอพ)
 
-## 🏗 System Capabilities
-
-### 1️⃣ Core System Capabilities (MVP Focus)
-*   **Foreground Service Persistence**: Service ที่ "ตายยาก" (Sticky Service) และกู้คืนตัวเองได้
-*   **Structured System Logging**: ระบบ Log แบบ JSON Parsing ที่ละเอียดระดับ Component พร้อม Export
-*   **Overlay Status**: การแสดงสถานะ "On Air" แบบลอยเหนือแอปอื่น
-*   **Battery Optimization Handling**: ระบบจัดการ Permission เพื่อขอสิทธิ์ทำงานเบื้องหลัง
-
-### 2️⃣ Extended Capabilities (Optional)
-*   **Screen Streaming**: การส่งภาพหน้าจอแบบ Real-time (Binary Stream)
-*   **Remote Touch Control**: การสั่งงานผ่าน Accessibility Service
-*   **Network Discovery**: ระบบค้นหาอุปกรณ์อัตโนมัติผ่าน UDP
-
----
-
-## 🔌 WebSocket System Channel (MVP)
-
-WebSocket is designed as a **system communication bus**, used for:
-- Service heartbeat & keep-alive signals
-- App / system state reporting (Telemetry)
-- Command → execution → result flow
-- Background-safe communication even when UI is not active
-
-ระบบใช้ WebSocket เพื่อการสื่อสารระดับ **System Bus** โดยมี Format ข้อมูลแบบ JSON Standard.
-
-### 1. Log / Event Structure
-```json
-{
-  "timestamp": "2024-02-12T20:30:00Z",
-  "level": "INFO", 
-  "component": "RelayService",
-  "event": "heartbeat",
-  "data": { "uptime_sec": 1204, "is_background": true }
-}
-```
-
-### 2. Supported Message Types
-*   **Heartbeat**: ยืนยันสถานะ Service (`uptime`, `memory`, `service_state`)
-*   **Command**: คำสั่งจากภายนอก (`click`, `swipe`, `stop_service`)
-*   **Telemetry**: รายงานสถานะเครือข่าย
-
----
-
-## 📐 System Architecture Diagram
-
-```
-[Client / Control Panel]
-           |
- (WebSocket System Bus)
-           |
-           v
-+--------------------------+
-|  Android Relay Service   |
-+--------------------------+
-|                          |
-|  [ WebSocket Manager ] <-----> (Cmd / Heartbeat / Logs)
-|           |              |
-|           +--------------+----> [ Core Logic ] (Auto-Restart)
-|           |              |           |
-|  [ Screen Capture ]      |      [ Log Repository ]
-|           |              |           |
-|  [ Accessibility ]       |      [ Export Module ] (JSON)
-|                          |
-+--------------------------+
-           |
-    (Hardware / SDK)
-     [ Dipchip Adapter ] ... (Future Integration)
-```
-
-## 🔌 WebSocket Communication Flow
-
-แผนภาพการทำงานเมื่อ Viewer เชื่อมต่อกับ Host:
+## 🏗️ System Diagram (Detailed)
 
 ```mermaid
-sequenceDiagram
-    participant UI as Viewer Screen (UI)
-    participant Client as WebSocket Manager (Client)
-    participant Server as Relay Server (Host)
+graph LR
+    %% Main Nodes
+    User("👤 User / Web Browser / Hardware SDK")
+    
+    subgraph Android_Device ["📱 Android Device"]
+        direction TB
+        
+        SystemBoot("⚡ System Boot")
+        
+        subgraph App_System ["⚙️ Application Core"]
+            Boot["BootReceiver<br/>(Auto-Start)"]
+            WS["WebSocket Server<br/>(RelayServer)"]
+            Service["Background Service<br/>(RelayService)"]
+            
+            subgraph Managers ["Managers"]
+                ScreenMgr["ScreenCaptureManager"]
+                OverlayMgr["OverlayManager"]
+                Log["LogRepository"]
+            end
+        end
 
-    Note over UI, Server: Connection Phase
-    UI->>Client: 1. Init Connection (ws://ip:port)
-    Client->>Server: 2. Handshake Request
-    Server-->>Client: 3. Connection Accepted (Open)
-    Client->>Server: 4. Send Auth ({"type": "auth", "key": "..."})
-    Server-->>Client: 5. Auth Response ({"status": "ok"})
-    Client->>UI: 6. Update Status: "Connected"
+        subgraph Android_API ["🤖 Android System APIs"]
+            OverlayAPI["System Alert Window"]
+            AccessAPI["Accessibility Service"]
+            MediaAPI["MediaProjection API"]
+        end
 
-    Note over UI, Server: Data Transmission Phase
-    loop Real-time Stream
-        Server->>Client: Binary Frame (Screen JPEG)
-        Client->>UI: Update Bitmap (Render Image)
+        %% Connections
+        SystemBoot --> Boot -->|"Start Service"| Service
+        
+        WS <-->|"JSON Data"| Service
+        
+        Service -->|"Manage State"| OverlayMgr
+        Service -->|"Command"| ScreenMgr
+        Service -->|"Log Events"| Log
+        
+        OverlayMgr -->|"Draw UI"| OverlayAPI
+        ScreenMgr -.->|"Capture Frame"| MediaAPI
+        
+        Service -->|"Inject Touch"| AccessAPI
     end
 
-    Note over UI, Server: Control Phase
-    UI->>Client: User Tap/Swipe
-    Client->>Server: Send Command ({"type": "touch", "x": 100, "y": 200})
-    Server->>Server: Inject Event (Accessibility)
+    %% External Connections
+    User <==>|"WebSocket Protocol"| WS
+    
+    %% Styling
+    classDef default fill:#f9f9f9,stroke:#333,stroke-width:1px;
+    classDef core fill:#e1f5fe,stroke:#0277bd,stroke-width:2px;
+    classDef system fill:#fff3e0,stroke:#ef6c00,stroke-width:2px;
+    classDef user fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px;
+    classDef boot fill:#ffebee,stroke:#c62828,stroke-width:2px;
+
+    class WS,Service,Log,Boot,ScreenMgr,OverlayMgr core;
+    class OverlayAPI,AccessAPI,MediaAPI system;
+    class User user;
+    class SystemBoot boot;
 ```
 
+## 📝 Engineering Notes
+
+### วัตถุประสงค์ (Objectives)
+*   เพื่อสร้างระบบ Remote Control และ Screen Mirroring ที่ทำงานได้เสถียรใน Background (Reliability)
+*   เพื่อเตรียมพร้อมสำหรับการเชื่อมต่อกับอุปกรณ์ Hardware ภายนอก (เช่น SDK ของ Dipchip) ในอนาคต
+*   เพื่อลดความซับซ้อนของการเชื่อมต่อ โดยใช้ WebSocket เป็นมาตรฐานกลางในการสื่อสาร (Standardization)
+
+### ประโยชน์จากโปรเจค (Benefits)
+*   สามารถควบคุมอุปกรณ์ Android ระยะไกลได้โดยไม่ต้อง Root (ใช้ Accessibility Service)
+*   นำไปประยุกต์ใช้กับตู้ Kiosk หรือป้ายโฆษณาที่ต้องการการบำรุงรักษาระยะไกลได้
+*   เป็นพื้นฐานในการพัฒนาต่อยอดไปสู่ระบบ IoT Control ที่ซับซ้อนขึ้น
+
+### Technical Overview
+*   **Architecture:** MVVM Pattern โดยมี Service เป็นแกนหลักในการประมวลผล (Service-based Architecture)
+*   **Networking:** ใช้ `org.java_websocket` สำหรับ Server side บนมือถือ และ `OkHttp` สำหรับ Client mode
+*   **Security:** มีระบบ Auth Key เบื้องต้นในการเชื่อมต่อ (ระบุใน `RelayServer.kt`)
+*   **Reliability:** ใช้ Foreground Service พร้อม Notification channel เพื่อป้องกัน Android System Kill Process
+
+## ✅ รายการ Task ที่ทำไปแล้ว (Completed Tasks)
+
+อ้างอิงจากแผนงานและสิ่งที่ implement แล้วในโค้ด:
+
+- [x] **Project Setup:** สร้างโปรเจค Android รองรับ Kotlin/Compose
+- [x] **Network Core:**
+    - [x] สร้าง `WebSocketManager.kt` สำหรับจัดการการเชื่อมต่อ Client
+    - [x] สร้าง `RelayServer.kt` สำหรับทำหน้าที่เป็น WebSocket Server
+- [x] **Background System:**
+    - [x] Implement `RelayService` (Foreground Service)
+    - [x] Implement `BootReceiver` สำหรับ Auto-start เมื่อเปิดเครื่อง
+- [x] **Permissions Handling:**
+    - [x] จัดการขอสิทธิ์ Overlay (Floating Window)
+    - [x] จัดการขอสิทธิ์ Accessibility Service
+    - [x] จัดการขอสิทธิ์ Internet และ Foreground Service
+- [x] **Accessibility Integration:**
+    - [x] สร้าง `RelayAccessibilityService` สำหรับรองรับการควบคุมระยะไกล (Click/Swipe)
+- [x] **Overlay UI:**
+    - [x] สร้าง `OverlayManager` สำหรับแสดงผลทับหน้าจออื่น
+- [x] **Log System:**
+    - [x] สร้างระบบ Log พื้นฐาน (`LogRepository`) เพื่อใช้ Audit การทำงาน
+
 ---
-
-## 📱 Features & How to Use (การใช้งาน)
-
-### 1. Permission Setup
-1.  **Allow Background Running**: ปิด Battery Optimization (สำคัญสำหรับ `Auto-restart`)
-2.  **Floating Windows**: แสดงสถานะ Overlay
-3.  **Notification**: แสดงสถานะ Notification Bar (Android 13+)
-4.  **Accessibility**: ควบคุมหน้าจอระยะไกล
-
-### 2. System Log View
-*   เข้าเมนู **System View** เพื่อดู Log การทำงานแบบ Real-time (JSON Components)
-*   **Export Data**: ส่งออกเป็นไฟล์ `.json`
-
----
-
-## 🔧 Engineering Notes / Log
-
-### 1. ความเสถียรของ Service (`START_STICKY`)
-- **Optimization**: ปรับใช้ `START_STICKY` ใน Service และแยก Threading ออกจาก Main UI
-- **Result**: Improves long-running reliability for on-call / unattended use cases. (แอปทำงานได้ยาวนาน ลดภาระการดูแลหน้างาน)
-
-### 2. ประสิทธิภาพการส่งข้อมูล (Binary Stream)
-- **Optimization**: เปลี่ยนการส่งข้อมูลภาพเป็น Raw Binary Streams แทน Base64
-- **Result**: Reduces bandwidth usage and CPU load, enabling scalable deployment on low-end hardware. (ประหยัดทรัพยากรเครื่อง)
-
-### 3. Structured Logging & Export
-- **Impl**: ระบบ Log แบบ JSON objects แทน Plain text
-- **Result**: Enables automated system diagnostics and easier fault isolation. (ช่วยให้การตรวจสอบปัญหาง่ายขึ้นมาก)
-
----
-*Project Status: System-Level MVP Complete (Ready for integration)*
+### 🔗 References
+*   [Android Accessibility Service Documentation](https://developer.android.com/reference/android/accessibilityservice/AccessibilityService)
+*   [MediaProjection API](https://developer.android.com/guide/topics/large-screens/media-projection)
+*   [Java-WebSocket Library](https://github.com/TooTallNate/Java-WebSocket)
+*   Reference App: Let's View (Background/Overlay behavior)
 
