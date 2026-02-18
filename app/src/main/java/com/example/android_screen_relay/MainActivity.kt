@@ -43,7 +43,25 @@ import com.example.android_screen_relay.ui.theme.AndroidscreenrelayTheme
 import java.net.Inet4Address
 import java.net.NetworkInterface
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.delay
+
+fun getDeviceIpAddress(): String {
+    try {
+        val interfaces = NetworkInterface.getNetworkInterfaces()
+        while (interfaces.hasMoreElements()) {
+            val networkInterface = interfaces.nextElement()
+            val enumeration = networkInterface.inetAddresses
+            while (enumeration.hasMoreElements()) {
+                val address = enumeration.nextElement()
+                if (!address.isLoopbackAddress && address is Inet4Address) {
+                    return address.hostAddress ?: "Unavailable"
+                }
+            }
+        }
+    } catch (e: Exception) {
+        e.printStackTrace()
+    }
+    return "Unavailable"
+}
 
 class MainActivity : ComponentActivity() {
 
@@ -387,10 +405,11 @@ fun HomeScreen(
                                 fontWeight = FontWeight.Bold,
                                 color = Color(0xFF2E7D32) // Darker Green text
                             )
+                            val ip = remember { getDeviceIpAddress() }
                             Text(
-                                "Screen is being shared locally",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = Color.Gray
+                                "IP: ws://$ip:8887",
+                                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+                                color = Color(0xFF0D47A1)
                             )
                         }
                      }

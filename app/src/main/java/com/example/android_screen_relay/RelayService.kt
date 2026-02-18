@@ -5,6 +5,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.IBinder
@@ -43,6 +44,12 @@ class RelayService : Service() {
         try {
             relayServer = RelayServer(8887)
             relayServer?.updatePasskey(passkey) // Set the passkey
+            
+            // Handle Notification Requests from Server
+            relayServer?.onShowNotification = { title, msg ->
+                showClientNotification(title, msg)
+            }
+            
             relayServer?.start()
             android.util.Log.d("RelayService", "RelayServer started on port 8887")
             // Start heartbeat for testing background connectivity
@@ -88,10 +95,13 @@ class RelayService : Service() {
                 try {
                     val quality = intent.getIntExtra("QUALITY_MODE", 1) // Default to Medium (1)
                     android.util.Log.d("RelayService", "Starting Screen Capture with Quality: $quality")
+                    /* 
+                    // TEMPORARILY DISABLED SCREEN CAPTURE TO TEST COMMAND STABILITY
                     screenCaptureManager.startCapture(resultCode, dataIntent, quality) { imageBytes ->
                         // Pass raw bytes to authenticated clients
                         relayServer?.broadcastToAuthenticated(imageBytes)
                     }
+                    */
                 } catch (e: Exception) {
                     android.util.Log.e("RelayService", "Error starting capture: ${e.message}")
                     e.printStackTrace()
@@ -187,5 +197,18 @@ class RelayService : Service() {
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Stop", stopPendingIntent)
             .build()
+    }
+
+    private fun showClientNotification(title: String, message: String) {
+        val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        val notification = NotificationCompat.Builder(this, CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.ic_dialog_email)
+            .setContentTitle(title)
+            .setContentText(message)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setAutoCancel(true)
+            .build()
+        
+        notificationManager.notify(System.currentTimeMillis().toInt(), notification)
     }
 }

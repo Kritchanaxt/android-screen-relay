@@ -13,6 +13,9 @@ class RelayServer(port: Int) : WebSocketServer(InetSocketAddress(port)) {
     // Store authenticated sessions (could use a list or set)
     private val authenticatedSessions = java.util.Collections.synchronizedSet(HashSet<WebSocket>())
     // Allow single controller for better security? For now allow multiple if they know the code.
+    
+    // Callback for notifications
+    var onShowNotification: ((String, String) -> Unit)? = null
 
     fun updatePasskey(passkey: String?) {
         this.currentPasskey = passkey
@@ -44,20 +47,7 @@ class RelayServer(port: Int) : WebSocketServer(InetSocketAddress(port)) {
             type = LogRepository.LogType.INFO
         )
         
-        // Enforce timeout for auth
-        kotlinx.coroutines.GlobalScope.launch {
-            kotlinx.coroutines.delay(5000)
-            if (conn.isOpen && !authenticatedSessions.contains(conn)) {
-                LogRepository.addLog(
-                    component = "RelayServer",
-                    event = "auth_timeout",
-                    data = mapOf("ip" to remoteAddr),
-                    level = "WARN",
-                    type = LogRepository.LogType.ERROR
-                )
-                conn.close(1008, "Authentication timeout")
-            }
-        }
+        // Timeout check removed for testing stability
     }
 
     override fun onClose(conn: WebSocket, code: Int, reason: String, remote: Boolean) {
@@ -180,6 +170,18 @@ class RelayServer(port: Int) : WebSocketServer(InetSocketAddress(port)) {
                     val y2 = json.optDouble("y2").toFloat()
                     val duration = json.optLong("duration", 300)
                     RelayAccessibilityService.instance?.swipe(x1, y1, x2, y2, duration)
+                }
+                "notification" -> {
+                    val title = json.optString("title", "New Notification")
+                    val message = json.optString("message", "You received a new message.")
+                    onShowNotification?.invoke(title, message)
+                    
+                    LogRepository.addLog(
+                        component = "RelayServer",
+                        event = "show_notification",
+                        data = mapOf("title" to title, "message" to message),
+                        type = LogRepository.LogType.INFO
+                    )
                 }
                 "back" -> RelayAccessibilityService.instance?.performGlobal(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK)
                 "home" -> RelayAccessibilityService.instance?.performGlobal(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_HOME)
