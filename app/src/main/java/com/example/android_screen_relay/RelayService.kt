@@ -42,7 +42,9 @@ class RelayService : Service() {
         
         // Start Local Server
         try {
+            android.util.Log.d("RelayService", "Initializing RelayServer on port 8887...")
             relayServer = RelayServer(8887)
+            relayServer?.isReuseAddr = true // Force reuse address at service level too just in case
             relayServer?.updatePasskey(passkey) // Set the passkey
             
             // Handle Notification Requests from Server
@@ -51,10 +53,11 @@ class RelayService : Service() {
             }
             
             relayServer?.start()
-            android.util.Log.d("RelayService", "RelayServer started on port 8887")
+            android.util.Log.d("RelayService", "RelayServer started successfully on port 8887")
             // Start heartbeat for testing background connectivity
             startHeartbeat()
         } catch (e: Exception) {
+            android.util.Log.e("RelayService", "Failed to start RelayServer: ${e.message}")
             e.printStackTrace()
         }
 
@@ -116,7 +119,9 @@ class RelayService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         try {
-            relayServer?.stop()
+            android.util.Log.d("RelayService", "Stopping RelayServer...")
+            relayServer?.stop(2000) // Wait up to 2 seconds for clean shutdown
+            android.util.Log.d("RelayService", "RelayServer stopped.")
         } catch (e: Exception) {
             e.printStackTrace()
         }
@@ -133,39 +138,55 @@ class RelayService : Service() {
     }
 
     private fun startHeartbeat() {
-        var counter = 0
+        var lastStatusCheck: Map<String, Any>? = null
+        
         scope.launch {
-            while (isActive) {
-                delay(1000)
-                try {
-                    val statusMap = mapOf<String, Any>(
-                        "uptime_sec" to (System.currentTimeMillis() - 0L) / 1000, // Ideally track start time
-                        "foreground_service" to true,
-                        "screen_capture_active" to (screenCaptureManager != null), // Assuming generic check
-                        "is_background" to true
-                    )
-                    
-                    val statusJson = org.json.JSONObject()
-                    statusJson.put("type", "heartbeat")
-                    statusJson.put("data", org.json.JSONObject(statusMap)) // Nest inside data for consistency? Or flatten?
-                    // Flat structure for existing clients but consistent with new logs internally
-                    statusMap.forEach { (k, v) -> statusJson.put(k, v) }
-                    
-                    relayServer?.broadcastToAuthenticated(statusJson.toString())
-                    
-                    // Log heartbeat less frequently to avoid spam (every 5s)
-                    counter++
-                    if (counter % 5 == 0) {
-                        LogRepository.addLog(
-                            component = "RelayService",
-                            event = "heartbeat",
-                            data = statusMap,
-                            type = LogRepository.LogType.OUTGOING
+            LogRepository.addLog(
+                component = "RelayService",
+                event = "heartbeat_started",
+                data = emptyMap(),
+                type = LogRepository.LogType.INFO
+            )
+            try {
+                while (isActive) {
+                    delay(1000)
+                    try {
+                        val statusMap = mapOf<String, Any>(
+                            "uptime_sec" to (System.currentTimeMillis() - 0L) / 1000, 
+                            "foreground_service" to true,
+                            "screen_capture_active" to (screenCaptureManager != null),
+                            "is_background" to true
                         )
+                        
+                        val statusJson = org.json.JSONObject()
+                        statusJson.put("type", "heartbeat")
+                        statusJson.put("data", org.json.JSONObject(statusMap)) 
+                        statusMap.forEach { (k, v) -> statusJson.put(k, v) }
+                        
+                        relayServer?.broadcastToAuthenticated(statusJson.toString())
+                        
+                        // Check if status changed (ignoring uptime)
+                        val statusCheck = statusMap.minus("uptime_sec")
+                        if (lastStatusCheck != statusCheck) {
+                            LogRepository.addLog(
+                                component = "RelayService",
+                                event = "heartbeat",
+                                data = statusMap,
+                                type = LogRepository.LogType.OUTGOING
+                            )
+                            lastStatusCheck = statusCheck
+                        }
+                    } catch (e: Exception) {
+                        e.printStackTrace()
                     }
-                } catch (e: Exception) {
-                    e.printStackTrace()
                 }
+            } finally {
+                LogRepository.addLog(
+                    component = "RelayService",
+                    event = "heartbeat_stopped",
+                    data = emptyMap(),
+                    type = LogRepository.LogType.INFO
+                )
             }
         }
     }

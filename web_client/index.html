@@ -72,6 +72,7 @@
 
         let frameCount = 0;
         const frameCounter = document.getElementById('frameCounter');
+        let lastHeartbeatJSON = "";
 
         function connect() {
             const url = urlInput.value.trim();
@@ -79,6 +80,7 @@
             
             frameCount = 0;
             updateFrameCounter(true);
+            lastHeartbeatJSON = ""; 
             log("Attempting to connect to " + url + "...");
             
             try {
@@ -109,7 +111,33 @@
                         updateFrameCounter();
                     } else {
                         // Handle Text Data (JSON)
-                        log("📥 Received: " + event.data);
+                        try {
+                            const jsonData = JSON.parse(event.data);
+                            if (jsonData.type === "heartbeat") {
+                                // Create a clean object for comparison by explicitly selecting stable fields
+                                // We ignore 'uptime_sec' and any top-level 'timestamp'
+                                const cleanData = {};
+                                
+                                // Handling both nested 'data' style and flat style
+                                const source = jsonData.data || jsonData;
+                                
+                                // Copy known stable keys that define state
+                                cleanData.foreground_service = source.foreground_service;
+                                cleanData.screen_capture_active = source.screen_capture_active;
+                                cleanData.is_background = source.is_background;
+                                // Add other stable status keys here if needed
+                                
+                                const currentHeartbeatStr = JSON.stringify(cleanData);
+                                if (currentHeartbeatStr !== lastHeartbeatJSON) {
+                                    log("💓 Heartbeat Status Changed: " + JSON.stringify(cleanData));
+                                    lastHeartbeatJSON = currentHeartbeatStr;
+                                }
+                            } else {
+                                log("📥 Received: " + event.data);
+                            }
+                        } catch (e) {
+                             log("📥 Received: " + event.data);
+                        }
                     }
                 };
 

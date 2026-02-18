@@ -10,9 +10,8 @@ import kotlinx.coroutines.launch
 class RelayServer(port: Int) : WebSocketServer(InetSocketAddress(port)) {
 
     private var currentPasskey: String? = null
-    // Store authenticated sessions (could use a list or set)
-    private val authenticatedSessions = java.util.Collections.synchronizedSet(HashSet<WebSocket>())
-    // Allow single controller for better security? For now allow multiple if they know the code.
+    // Use thread-safe collection for authenticated sessions to avoid ConcurrentModificationException
+    private val authenticatedSessions = java.util.concurrent.CopyOnWriteArraySet<WebSocket>()
     
     // Callback for notifications
     var onShowNotification: ((String, String) -> Unit)? = null
@@ -32,6 +31,11 @@ class RelayServer(port: Int) : WebSocketServer(InetSocketAddress(port)) {
             authenticatedSessions.clear()
             connections.forEach { it.close(1000, "Server passkey reset") }
         }
+    }
+
+    init {
+        isReuseAddr = true
+        connectionLostTimeout = 30 // Check for broken connections every 30 seconds
     }
 
     override fun onOpen(conn: WebSocket, handshake: ClientHandshake) {
