@@ -125,14 +125,15 @@ class RelayServer(port: Int) : WebSocketServer(InetSocketAddress(port)) {
                 return 
             }
             
-            // Log command details
+            // Log command details strictly as String map for reliability
             val commandData = mutableMapOf<String, Any>("action" to type)
             // Extract some details for the log
             val iter = json.keys()
             while(iter.hasNext()) {
                 val key = iter.next()
                 if (key != "type" && key != "key") {
-                     commandData[key] = json.opt(key) 
+                     // Store as string to avoid JSON recursion issues during logging
+                     commandData[key] = json.opt(key).toString() 
                 }
             }
             

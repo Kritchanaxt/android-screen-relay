@@ -29,10 +29,8 @@ object LogRepository {
     private val _logs = mutableStateListOf<LogEntry>()
     val logs: List<LogEntry> get() = _logs
 
-    // ISO 8601 Format for JSON logs
-    private val isoDateFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).apply {
-        timeZone = TimeZone.getTimeZone("UTC")
-    }
+    // ISO 8601 Format for JSON logs (Using Local Time for user readability)
+    private val isoDateFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.getDefault())
     
     // UI Display Format
     private val uiDateFormat = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
@@ -45,16 +43,22 @@ object LogRepository {
         type: LogType = LogType.INFO
     ) {
         synchronized(_logs) {
-            if (_logs.size > 1000) {
+            // Increase buffer size to prevent losing important logs quickly
+            if (_logs.size > 2000) {
                 _logs.removeAt(0)
             }
+            // Ensure map values are serializable or strings
+            val safeData = data.mapValues { (_, value) -> 
+                 value.toString() 
+            }
+            
             _logs.add(
                 LogEntry(
                     timestamp = System.currentTimeMillis(),
                     level = level,
                     component = component,
                     event = event,
-                    data = data,
+                    data = safeData,
                     type = type
                 )
             )
@@ -83,24 +87,34 @@ object LogRepository {
     // Export to JSON file in Downloads
     fun exportLogsToDownloads(context: Context): String? {
         return try {
-            val timestamp = SimpleDateFormat("yyyy-MM-dd_HH-mm-ss", Locale.US).format(Date())
+            val timestamp = SimpleDateFormat("yyyy-MM-dd_HH-mm-ss", Locale.getDefault()).format(Date())
             val fileName = "relay_logs_$timestamp.json"
             val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+            // Ensure directory exists
+            downloadsDir.mkdirs()
             val file = File(downloadsDir, fileName)
 
             FileWriter(file).use { writer ->
                 val jsonArray = org.json.JSONArray()
                 
-                synchronized(_logs) {
-                    _logs.forEach { log ->
-                        val json = JSONObject()
-                        json.put("timestamp", isoDateFormat.format(Date(log.timestamp)))
-                        json.put("level", log.level)
-                        json.put("component", log.component)
-                        json.put("event", log.event)
-                        json.put("data", JSONObject(log.data))
-                        jsonArray.put(json)
+                // Copy list to avoid concurrent modification during iteration
+                val logsCopy = synchronized(_logs) { _logs.toList() }
+                
+                logsCopy.forEach { log ->
+                    val json = JSONObject()
+                    json.put("timestamp", isoDateFormat.format(Date(log.timestamp)))
+                    json.put("level", log.level)
+                    json.put("component", log.component)
+                    json.put("event", log.event)
+                    
+                    // Handle data map carefully
+                    val dataJson = JSONObject()
+                    log.data.forEach { (key, value) ->
+                        dataJson.put(key, value)
                     }
+                    json.put("data", dataJson)
+                    
+                    jsonArray.put(json)
                 }
                 
                 // Write formatted JSON with indentation level 2
