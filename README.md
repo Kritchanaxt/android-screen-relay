@@ -100,11 +100,11 @@ graph LR
     User <==>|"WebSocket Protocol"| WS
     
     %% Styling
-    classDef default fill:#f9f9f9,stroke:#333,stroke-width:1px;
-    classDef core fill:#e1f5fe,stroke:#0277bd,stroke-width:2px;
-    classDef system fill:#fff3e0,stroke:#ef6c00,stroke-width:2px;
-    classDef user fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px;
-    classDef boot fill:#ffebee,stroke:#c62828,stroke-width:2px;
+    classDef default fill:#f9f9f9,stroke:#333,stroke-width:1px,color:#000;
+    classDef core fill:#e1f5fe,stroke:#0277bd,stroke-width:2px,color:#000;
+    classDef system fill:#fff3e0,stroke:#ef6c00,stroke-width:2px,color:#000;
+    classDef user fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px,color:#000;
+    classDef boot fill:#ffebee,stroke:#c62828,stroke-width:2px,color:#000;
 
     class WS,Service,Log,Boot,ScreenMgr,OverlayMgr core;
     class OverlayAPI,AccessAPI,MediaAPI system;
